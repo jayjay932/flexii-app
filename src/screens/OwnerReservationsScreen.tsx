@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Ionicons from "react-native-vector-icons/Ionicons";
+import FastImage from "react-native-fast-image";
 import { supabase } from "@/src/lib/supabase";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "@/src/navigation/RootNavigator";
@@ -46,9 +47,11 @@ type Row = {
 };
 
 const money = (n: number, cur = "XOF") =>
-  new Intl.NumberFormat("fr-FR", { style: "currency", currency: cur as any, maximumFractionDigits: 0 }).format(
-    Number(n || 0)
-  );
+  new Intl.NumberFormat("fr-FR", {
+    style: "currency",
+    currency: cur as any,
+    maximumFractionDigits: 0,
+  }).format(Number(n || 0));
 
 const fmtRange = (a: string, b: string) => {
   const A = new Date(a), B = new Date(b);
@@ -89,7 +92,7 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
           return;
         }
 
-        // LOGEMENTS (inner join + filtres owner + photos)
+        // LOGEMENTS
         const qL = await supabase
           .from("reservations")
           .select(
@@ -121,7 +124,7 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
           .eq("vehicule.owner_id", uid)
           .order("created_at", { ascending: false });
 
-        // EXPERIENCES (si tu les utilises)
+        // EXPERIENCES
         const qE = await supabase
           .from("reservations")
           .select(
@@ -312,6 +315,10 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
             keyExtractor={(it) => it.id}
             contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+            removeClippedSubviews
+            windowSize={7}
+            initialNumToRender={6}
+            maxToRenderPerBatch={8}
             renderItem={({ item }) => {
               const kind = item.logement_id
                 ? "logement"
@@ -354,49 +361,72 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
                   ? "Terminée"
                   : (item.status || "—");
 
+              // Prépare les sources FastImage (cache + priorité)
+              const coverSrc: React.ComponentProps<typeof FastImage>["source"] = cover
+                ? {
+                    uri: cover,
+                    priority: FastImage.priority.high,
+                    cache: FastImage.cacheControl.immutable,
+                  }
+                : require("../../assets/images/logement.jpg");
+              const secondSrc: React.ComponentProps<typeof FastImage>["source"] = second
+                ? {
+                    uri: second,
+                    priority: FastImage.priority.normal,
+                    cache: FastImage.cacheControl.immutable,
+                  }
+                : require("../../assets/images/logement.jpg");
+
               return (
                 <View style={styles.cardWrap}>
-                  <View style={styles.card}>
-                    <View style={styles.cardHeader}>
-                      <Text style={styles.cardTitle} numberOfLines={2}>
-                        {title}
+                  {/* ✅ Rasterisation sur un View parent (valable TypeScript) */}
+                  <View renderToHardwareTextureAndroid={true} shouldRasterizeIOS={true}>
+                    <View style={styles.card}>
+                      <View style={styles.cardHeader}>
+                        <Text style={styles.cardTitle} numberOfLines={2}>
+                          {title}
+                        </Text>
+                        <View style={styles.pill}>
+                          <Text style={styles.pillTxt}>{status}</Text>
+                        </View>
+                      </View>
+
+                      <Text style={styles.cardMeta} numberOfLines={1}>
+                        {city ? `${city} • ` : ""}
+                        {range} • {kind === "logement" ? "Logement" : kind === "vehicule" ? "Véhicule" : "Expérience"}
                       </Text>
-                      <View style={styles.pill}>
-                        <Text style={styles.pillTxt}>{status}</Text>
-                      </View>
-                    </View>
 
-                    <Text style={styles.cardMeta} numberOfLines={1}>
-                      {city ? `${city} • ` : ""}
-                      {range} • {kind === "logement" ? "Logement" : kind === "vehicule" ? "Véhicule" : "Expérience"}
-                    </Text>
-
-                    <View style={styles.thumbRow}>
-                      <ImageBackground
-                        source={cover ? { uri: cover } : require("../../assets/images/logement2.jpg")}
-                        style={styles.thumb}
-                        imageStyle={styles.thumbImg}
-                      />
-                      <ImageBackground
-                        source={second ? { uri: second } : require("../../assets/images/logement.jpg")}
-                        style={styles.thumb}
-                        imageStyle={styles.thumbImg}
-                      />
-                    </View>
-
-                    <View style={styles.footerRow}>
-                      <View>
-                        <Text style={styles.totalLabel}>Total</Text>
-                        <Text style={styles.totalValue}>{money(item.total_price, cur)}</Text>
+                      <View style={styles.thumbRow}>
+                        <View style={styles.thumb}>
+                          <FastImage
+                            source={coverSrc}
+                            style={styles.thumbImgFast}
+                            resizeMode={FastImage.resizeMode.cover}
+                          />
+                        </View>
+                        <View style={styles.thumb}>
+                          <FastImage
+                            source={secondSrc}
+                            style={styles.thumbImgFast}
+                            resizeMode={FastImage.resizeMode.cover}
+                          />
+                        </View>
                       </View>
 
-                      <TouchableOpacity
-                        activeOpacity={0.9}
-                        style={styles.cta}
-                        onPress={() => openDetails(item.id)}
-                      >
-                        <Text style={styles.ctaTxt}>Voir les détails</Text>
-                      </TouchableOpacity>
+                      <View style={styles.footerRow}>
+                        <View>
+                          <Text style={styles.totalLabel}>Total</Text>
+                          <Text style={styles.totalValue}>{money(item.total_price, cur)}</Text>
+                        </View>
+
+                        <TouchableOpacity
+                          activeOpacity={0.9}
+                          style={styles.cta}
+                          onPress={() => openDetails(item.id)}
+                        >
+                          <Text style={styles.ctaTxt}>Voir les détails</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
                   </View>
                 </View>
@@ -459,7 +489,13 @@ const styles = StyleSheet.create({
 
   thumbRow: { flexDirection: "row", gap: 12, marginTop: 12 },
   thumb: { flex: 1, height: 110, borderRadius: 14, overflow: "hidden" },
-  thumbImg: { borderRadius: 14 },
+
+  // FastImage remplit la vignette
+  thumbImgFast: {
+    ...StyleSheet.absoluteFillObject,
+    width: undefined,
+    height: undefined,
+  } as any,
 
   footerRow: { marginTop: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   totalLabel: { color: "#6b6b6b", fontWeight: "700" },
