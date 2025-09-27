@@ -4,7 +4,6 @@ import {
   ActivityIndicator,
   Dimensions,
   FlatList,
-  Image,
   Linking,
   ScrollView,
   StyleSheet,
@@ -18,9 +17,16 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { CalendarList, DateData, LocaleConfig } from "react-native-calendars";
+import FastImage from "react-native-fast-image";
 import { supabase } from "@/src/lib/supabase";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/RootNavigator";
+import type { ListRenderItem } from "react-native";
+
+type ImageItem = { id: string; url: string };
+
+/* Alias de type source FastImage (plus robuste que FastImage.Source) */
+type FISource = React.ComponentProps<typeof FastImage>["source"];
 
 /* ------- Localisation FR pour react-native-calendars ------- */
 LocaleConfig.locales.fr = {
@@ -100,7 +106,7 @@ const equipIcon = (name: string): keyof typeof Ionicons.glyphMap => {
 const bust = (uri: string, id: string) =>
   `${uri}${uri.includes("?") ? "&" : "?"}v=${encodeURIComponent(id)}`;
 
-/* Helpers UTC-safe pour indispos (même logique que Logement) */
+/* Helpers UTC-safe pour indispos (fin EXCLUE) */
 const toUTC = (iso: string) => {
   const [y, m, d] = iso.split("-").map(Number);
   return new Date(Date.UTC(y, (m ?? 1) - 1, d ?? 1));
@@ -132,7 +138,7 @@ export default function VehiculeDetailsScreen({ route, navigation }: Props) {
     if (viewableItems?.length > 0) setIndex(viewableItems[0].index ?? 0);
   });
 
-  // ====== mêmes états que Logement ======
+  // ====== Calendrier / prix jour ======
   const [unavailable, setUnavailable] = useState<Record<string, true>>({});
   const [overridePrices, setOverridePrices] = useState<Record<string, number>>({});
   const [dayPriceOverride, setDayPriceOverride] = useState<number | null>(null);
@@ -142,6 +148,11 @@ export default function VehiculeDetailsScreen({ route, navigation }: Props) {
   const [startDate, setStartDate] = useState<string | null>(null);
   const [endDate, setEndDate] = useState<string | null>(null);
   const [tab, setTab] = useState<"dates" | "mois" | "flex">("dates");
+
+  // Refs de realtime (séparer détails vs calendrier)
+  const detailChRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const calChRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const fetchCalendarRef = useRef<null | (() => Promise<void>)>(null);
 
   // calcul “nuits/jours”
   const nights = useMemo(() => {
@@ -158,8 +169,53 @@ export default function VehiculeDetailsScreen({ route, navigation }: Props) {
   );
   const totalPrice = useMemo(() => effectiveUnit * nights, [effectiveUnit, nights]);
 
-  // ====== Chargement ======
-  const chRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  /* ===== Fetch calendrier réutilisable ===== */
+  const fetchCalendar = useCallback(async () => {
+    // Réservations confirmées/completed → indispos (fin EXCLUE)
+    const { data: res } = await supabase
+      .from("reservations")
+      .select("start_date, end_date, status")
+      .eq("vehicule_id", id)
+      .in("status", ["confirmed", "completed"]);
+
+    const disabledByResa: Record<string, true> = {};
+    (res ?? []).forEach((r: any) => {
+      if (r.start_date && r.end_date) addRangeFromReservation(r.start_date, r.end_date, disabledByResa);
+    });
+
+    // Overrides (prix & indispo)
+    const today = new Date();
+    const future = new Date();
+    future.setMonth(future.getMonth() + 18);
+    const todayKey = today.toISOString().slice(0, 10);
+    const futureKey = future.toISOString().slice(0, 10);
+
+    const { data: ov } = await supabase
+      .from("availability_overrides")
+      .select("date, is_available, price")
+      .eq("listing_type", "vehicule")
+      .eq("listing_id", id)
+      .gte("date", todayKey)
+      .lte("date", futureKey);
+
+    const ovPrices: Record<string, number> = {};
+    const ovDisabled: Record<string, true> = {};
+    (ov ?? []).forEach((r: any) => {
+      const k = r.date as string;
+      if (r.is_available === false) ovDisabled[k] = true;
+      if (r.price != null) ovPrices[k] = Number(r.price);
+    });
+
+    setOverridePrices(ovPrices);
+    setUnavailable({ ...disabledByResa, ...ovDisabled });
+  }, [id]);
+
+  // expose la fonction pour realtime
+  useEffect(() => {
+    fetchCalendarRef.current = fetchCalendar;
+  }, [fetchCalendar]);
+
+  /* ====== Chargement principal ====== */
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
@@ -208,47 +264,13 @@ export default function VehiculeDetailsScreen({ route, navigation }: Props) {
         .eq("vehicule_id", id);
       const eq: EquipItem[] =
         (eqRows ?? [])
-          .map((row: any) => row?.equipements)
+          .map((r: any) => r?.equipements)
           .filter((e: any) => e && (e.category === "vehicule" || e.category == null))
           .map((e: any) => ({ id: e.id as string, name: e.name as string })) ?? [];
       setEquipements(eq);
 
-      // 3) Réservations -> indisponibilités (même logique que logement)
-      const { data: res } = await supabase
-        .from("reservations")
-        .select("start_date, end_date, status")
-        .eq("vehicule_id", id)
-        .in("status", ["confirmed", "completed"]);
-      const disabledByResa: Record<string, true> = {};
-      (res ?? []).forEach((r: any) => {
-        if (r.start_date && r.end_date) addRangeFromReservation(r.start_date, r.end_date, disabledByResa);
-      });
-
-      // 3bis) Overrides (prix & indispo)
-      const today = new Date();
-      const future = new Date();
-      future.setMonth(future.getMonth() + 18);
-      const todayKey = today.toISOString().slice(0, 10);
-      const futureKey = future.toISOString().slice(0, 10);
-
-      const { data: ov } = await supabase
-        .from("availability_overrides")
-        .select("date, is_available, price")
-        .eq("listing_type", "vehicule")
-        .eq("listing_id", id)
-        .gte("date", todayKey)
-        .lte("date", futureKey);
-
-      const ovPrices: Record<string, number> = {};
-      const ovDisabled: Record<string, true> = {};
-      (ov ?? []).forEach((r: any) => {
-        const k = r.date as string;
-        if (r.is_available === false) ovDisabled[k] = true;
-        if (r.price != null) ovPrices[k] = Number(r.price);
-      });
-
-      setOverridePrices(ovPrices);
-      setUnavailable({ ...disabledByResa, ...ovDisabled });
+      // 3) Calendrier & overrides (séparé pour pouvoir le rafraîchir en temps réel)
+      await fetchCalendar();
     } catch (e) {
       console.error(e);
       setData(null);
@@ -258,13 +280,16 @@ export default function VehiculeDetailsScreen({ route, navigation }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, fetchCalendar]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
-  // Realtime basique
+  /* ===== Realtime : détails ===== */
   useEffect(() => {
-    void chRef.current?.unsubscribe();
+    if (detailChRef.current) {
+      supabase.removeChannel(detailChRef.current);
+      detailChRef.current = null;
+    }
     const ch = supabase
       .channel(`vehicule-detail-${id}`)
       .on("postgres_changes",
@@ -280,9 +305,51 @@ export default function VehiculeDetailsScreen({ route, navigation }: Props) {
         fetchAll
       )
       .subscribe();
-    chRef.current = ch;
-    return () => { void ch.unsubscribe(); };
+    detailChRef.current = ch;
+
+    return () => {
+      if (detailChRef.current) {
+        supabase.removeChannel(detailChRef.current);
+        detailChRef.current = null;
+      }
+    };
   }, [id, fetchAll]);
+
+  /* ===== Realtime : calendrier (léger) ===== */
+  useEffect(() => {
+    if (calChRef.current) {
+      supabase.removeChannel(calChRef.current);
+      calChRef.current = null;
+    }
+    const handleCal = () => fetchCalendarRef.current?.();
+
+    const ch = supabase
+      .channel(`vehicule-cal-rt-${id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "reservations", filter: `vehicule_id=eq.${id}` },
+        handleCal
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "availability_overrides",
+          filter: `listing_id=eq.${id}`,
+        },
+        handleCal
+      )
+      .subscribe();
+
+    calChRef.current = ch;
+    return () => {
+      if (calChRef.current) {
+        supabase.removeChannel(calChRef.current);
+        calChRef.current = null;
+      }
+    };
+  }, [id]);
 
   // ====== Négociation (identique à logement, mais kind="vehicule") ======
   const onPressNegocier = useCallback(async () => {
@@ -347,7 +414,7 @@ export default function VehiculeDetailsScreen({ route, navigation }: Props) {
     }
   }, [data, navigation]);
 
-  // retour depuis chat avec prix négocié → ouvre calendrier (même que logement)
+  // retour depuis chat avec prix négocié → ouvre calendrier
   useEffect(() => {
     if (route.params?.resetFromChatReserve) {
       if (typeof route.params?.negotiatedUnitPrice === "number") {
@@ -508,25 +575,66 @@ export default function VehiculeDetailsScreen({ route, navigation }: Props) {
     );
   };
 
+  /* ===== Render item FastImage (carrousel) ===== */
+  // ✅ signature correcte (index bien typé)
+const renderSlide: ListRenderItem<ImageItem> = useCallback(({ item, index }) => {
+  const isFirst = index === 0;
+  const src: FISource = item.url
+    ? {
+        uri: bust(item.url, item.id),
+        priority: isFirst ? FastImage.priority.high : FastImage.priority.normal,
+        cache: FastImage.cacheControl.immutable,
+      }
+    : require("../../assets/images/logement.jpg");
+
+  return (
+    <FastImage
+      source={src}
+      style={styles.heroImage}
+      resizeMode={FastImage.resizeMode.cover}
+    />
+  );
+}, []);
+
+// ✅ précise le type des items de la FlatList
+<FlatList<ImageItem>
+  data={imageCount ? data.images : [{ id: "placeholder", url: "" }]}
+  keyExtractor={(it) => it.id}
+  horizontal
+  pagingEnabled
+  renderItem={renderSlide}
+  onViewableItemsChanged={onViewableItemsChanged.current}
+  viewabilityConfig={viewConfigRef.current}
+  initialNumToRender={1}
+  maxToRenderPerBatch={2}
+  windowSize={3}
+  removeClippedSubviews
+  getItemLayout={(_: any, i: number) => ({ length: SCREEN_W, offset: SCREEN_W * i, index: i })}
+/>
+  const keySlide = useCallback((it: any) => it.id, []);
+  const getItemLayout = useCallback(
+    (_: any, i: number) => ({ length: SCREEN_W, offset: SCREEN_W * i, index: i }),
+    []
+  );
+
   return (
     <View style={styles.root}>
       {/* ===== HERO ===== */}
       <View style={styles.hero}>
         <FlatList
           data={imageCount ? data.images : [{ id: "placeholder", url: "" }]}
-          keyExtractor={(it: any) => it.id}
+          keyExtractor={keySlide}
           horizontal
           pagingEnabled
           showsHorizontalScrollIndicator={false}
-          renderItem={({ item }) => (
-            <Image
-              source={item.url ? { uri: bust(item.url, item.id) } : require("../../assets/images/logement.jpg")}
-              style={styles.heroImage}
-              resizeMode="cover"
-            />
-          )}
+          renderItem={renderSlide}
           onViewableItemsChanged={onViewableItemsChanged.current}
           viewabilityConfig={viewConfigRef.current}
+          initialNumToRender={1}
+          maxToRenderPerBatch={2}
+          windowSize={3}
+          removeClippedSubviews
+          getItemLayout={getItemLayout}
         />
 
         <SafeAreaView edges={["top"]} style={styles.heroTopBar}>
@@ -620,9 +728,18 @@ export default function VehiculeDetailsScreen({ route, navigation }: Props) {
             <Text style={styles.sectionTitle}>Faites connaissance avec votre hôte</Text>
             <View style={styles.hostCard}>
               <View style={styles.hostRow}>
-                <Image
-                  source={data.owner.avatar_url ? { uri: data.owner.avatar_url } : require("../../assets/images/logement.jpg")}
+                <FastImage
+                  source={
+                    data.owner.avatar_url
+                      ? ({
+                          uri: data.owner.avatar_url,
+                          priority: FastImage.priority.normal,
+                          cache: FastImage.cacheControl.immutable,
+                        } as FISource)
+                      : (require("../../assets/images/logement.jpg") as FISource)
+                  }
                   style={styles.hostAvatar}
+                  resizeMode={FastImage.resizeMode.cover}
                 />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.hostName}>{data.owner.full_name}</Text>
@@ -663,7 +780,7 @@ export default function VehiculeDetailsScreen({ route, navigation }: Props) {
         </View>
       </ScrollView>
 
-      {/* ===== BARRE BAS (même UX que logement) ===== */}
+      {/* ===== BARRE BAS ===== */}
       <SafeAreaView style={styles.bottomSafe} edges={[]}>
         <View style={styles.bottomBar}>
           <View>

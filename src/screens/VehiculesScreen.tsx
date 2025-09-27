@@ -4,13 +4,14 @@ import {
   ActivityIndicator,
   Dimensions,
   FlatList,
-  Image,
   ImageBackground,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
+import type { ListRenderItem } from "react-native";
+import FastImage from "react-native-fast-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "@/src/lib/supabase";
@@ -18,6 +19,8 @@ import SegmentedTabs from "@/src/components/SegmentedTabs";
 import SearchBar from "@/src/components/SearchBar";
 import BottomNavBar, { TabKey } from "@/src/components/BottomNavBar";
 import VehicleSearchModal, { VehicleFilters } from "./VehicleSearchModal";
+
+// .
 
 type Vehicule = {
   id: string;
@@ -56,6 +59,9 @@ const CHIP_KEYWORDS: Record<ChipLabel, string[]> = {
   Moto: ["moto", "motorbike", "bike"],
 };
 
+// ✅ type sûr pour la source FastImage (évite les erreurs de namespace)
+type FISource = React.ComponentProps<typeof FastImage>["source"];
+
 export default function VehiculesScreen({ navigation }: any) {
   const [vehicules, setVehicules] = useState<Vehicule[]>([]);
   const [loading, setLoading] = useState(true);
@@ -85,8 +91,6 @@ export default function VehiculesScreen({ navigation }: any) {
   }, [filters, activeChip]);
 
   const resetFilters = useCallback(() => {
-    // 1 seul tap : on se contente de reset l’état
-    // Le refetch part tout seul via l'useEffect([fetchVehicules])
     setFilters({});
     setActiveChip(null);
   }, []);
@@ -215,7 +219,6 @@ export default function VehiculesScreen({ navigation }: any) {
 
   // Realtime : UN SEUL canal
   useEffect(() => {
-    // nettoie un éventuel ancien canal
     if (channelRef.current) {
       void supabase.removeChannel(channelRef.current);
       channelRef.current = null;
@@ -290,28 +293,41 @@ export default function VehiculesScreen({ navigation }: any) {
 
   const titleOf = (v: Vehicule) => v.title || `${v.marque} ${v.modele}`.trim();
 
-  const renderCard = ({ item }: { item: Vehicule }) => {
-    const bust = imageBust[item.id];
-    const uri =
-      item.image_url &&
-      `${item.image_url}${item.image_url.includes("?") ? "&" : "?"}v=${encodeURIComponent(
-        String(bust ?? 1)
-      )}`;
+  // ✅ renderItem typé (évite les erreurs) + FastImage pour perf
 
-    return (
+
+// ...
+
+const renderCard: ListRenderItem<Vehicule> = ({ item }) => {
+  const bust = imageBust[item.id];
+  const uri =
+    item.image_url &&
+    `${item.image_url}${item.image_url.includes("?") ? "&" : "?"}v=${encodeURIComponent(
+      String(bust ?? 1)
+    )}`;
+
+  const src: React.ComponentProps<typeof FastImage>["source"] = uri
+    ? {
+        uri,
+        priority: FastImage.priority.normal,
+        cache: FastImage.cacheControl.immutable,
+      }
+    : require("../../assets/images/logement.jpg");
+
+  return (
+    <View renderToHardwareTextureAndroid={true} shouldRasterizeIOS={true}>
       <TouchableOpacity
         activeOpacity={0.9}
         onPress={() => navigation.navigate("VehiculeDetails", { id: item.id })}
         style={styles.card}
       >
         <View style={styles.cardImageWrap}>
-          <Image
+          <FastImage
             key={`${item.id}-${item.image_id ?? "noimg"}-${bust ?? 0}`}
-            source={uri ? { uri } : require("../../assets/images/logement.jpg")}
+            source={src}
             style={styles.cardImage}
-            resizeMode="cover"
+            resizeMode={FastImage.resizeMode.cover}
           />
-
           <View style={styles.favBtn}>
             <Ionicons name="heart-outline" size={20} color="#111" />
           </View>
@@ -345,8 +361,13 @@ export default function VehiculesScreen({ navigation }: any) {
           </View>
         </View>
       </TouchableOpacity>
-    );
-  };
+    </View>
+  );
+};
+
+ 
+
+  const keyExtractor = useCallback((it: Vehicule) => it.id, []);
 
   if (loading) {
     return (
@@ -418,12 +439,18 @@ export default function VehiculesScreen({ navigation }: any) {
             </TouchableOpacity>
           </View>
         ) : (
-          <FlatList
+          <FlatList<Vehicule>
             data={vehicules}
-            keyExtractor={(it) => it.id}
+            keyExtractor={keyExtractor}
             renderItem={renderCard}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingBottom: 80 }}
+            // ⚡️ perf : on rend peu d’items au début, fenêtre courte, clipping
+            initialNumToRender={6}
+            maxToRenderPerBatch={8}
+            windowSize={7}
+            removeClippedSubviews
+            // scrollsToTop et autres options safe par défaut
           />
         )}
       </View>
@@ -438,7 +465,6 @@ export default function VehiculesScreen({ navigation }: any) {
           setFilters(f);
           setActiveChip(null);
           setSearchOpen(false);
-          // Pas de fetch manuel ici non plus : l'useEffect va prendre le relais
         }}
       />
     </View>
