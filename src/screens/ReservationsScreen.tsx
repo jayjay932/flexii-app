@@ -1,5 +1,5 @@
 // src/screens/ReservationsScreen.tsx
-import React, { useCallback, useEffect, useState, useMemo } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -7,20 +7,26 @@ import {
   FlatList,
   TouchableOpacity,
   ActivityIndicator,
-  Image, // gardé pour le fond flou
+  Image,
+  ImageBackground,
   RefreshControl,
   Platform,
-  Dimensions,
-  PixelRatio,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Ionicons from "react-native-vector-icons/Ionicons";
-import FastImage from "react-native-fast-image";
 import { supabase } from "@/src/lib/supabase";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "@/src/navigation/RootNavigator";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Reservations">;
+
+type AnyListing = {
+  title?: string | null;       // logement/expérience
+  city?: string | null;
+  listing_images?: { image_url: string | null }[] | null;
+  marque?: string | null;      // véhicule
+  modele?: string | null;      // véhicule
+};
 
 type Row = {
   id: string;
@@ -29,22 +35,16 @@ type Row = {
   total_price: number;
   currency: string | null;
   status: string | null;
-  listings_logements?:
-    | {
-        title: string;
-        city: string;
-        listing_images?: { image_url: string | null }[];
-      }
-    | {
-        title: string;
-        city: string;
-        listing_images?: { image_url: string | null }[];
-      }[] // <- parfois PostgREST renvoie un tableau selon la relation
-    | null;
+  logement_id: string | null;
+  vehicule_id: string | null;
+  experience_id: string | null;
+  listings_logements?: AnyListing | null;
+  listings_vehicules?: AnyListing | null;
+  listings_experiences?: AnyListing | null;
 };
 
 const money = (n: number, cur = "XOF") =>
-  new Intl.NumberFormat("fr-FR", { style: "currency", currency: cur as any }).format(
+  new Intl.NumberFormat("fr-FR", { style: "currency", currency: cur as any, maximumFractionDigits: 0 }).format(
     Number(n || 0)
   );
 
@@ -53,44 +53,6 @@ const fmtRange = (a: string, b: string) => {
   const opt: Intl.DateTimeFormatOptions = { day: "2-digit", month: "short" };
   return `${A.toLocaleDateString("fr-FR", opt)} – ${B.toLocaleDateString("fr-FR", opt)}`;
 };
-
-const mapStatus = (s?: string | null) =>
-  s === "confirmed" ? "Confirmée"
-  : s === "pending" ? "En attente"
-  : s === "cancelled" ? "Annulée"
-  : "Terminée";
-
-/* ------- Helpers images (miniatures Supabase + cache) ------- */
-const { width: SCREEN_W } = Dimensions.get("window");
-const THUMB_H = 110;
-const PLACEHOLDER = require("../../assets/images/logement.jpg");
-
-// largeur d’une vignette (2 colonnes, padding 16, gap 12)
-const THUMB_W = (SCREEN_W - 16 * 2 - 12) / 2;
-
-const supaThumb = (
-  url?: string | null,
-  w = THUMB_W,
-  h = THUMB_H,
-  q = 70,
-  mode: "cover" | "contain" = "cover"
-) => {
-  if (!url) return undefined;
-  try {
-    if (url.includes("/storage/v1/object/public/")) {
-      const [base] = url.split("?");
-      const render = base.replace("/object/public/", "/render/image/public/");
-      const pxW = Math.min(Math.round(w * PixelRatio.get()), 1000);
-      const pxH = Math.min(Math.round(h * PixelRatio.get()), 1000);
-      return `${render}?width=${pxW}&height=${pxH}&quality=${q}&resize=${mode}`;
-    }
-  } catch {}
-  return url;
-};
-
-// prend le premier élément si la relation est un tableau
-const first = <T,>(v: T | T[] | null | undefined): T | undefined =>
-  !v ? undefined : Array.isArray(v) ? v[0] : v;
 
 export default function ReservationsScreen({ navigation }: Props) {
   const [rows, setRows] = useState<Row[]>([]);
@@ -106,35 +68,32 @@ export default function ReservationsScreen({ navigation }: Props) {
         navigation.replace("AuthSheet");
         return;
       }
+
+      // ✅ Un seul SELECT qui ramène les 3 types + leurs photos
       const { data, error } = await supabase
         .from("reservations")
         .select(`
           id, start_date, end_date, total_price, currency, status,
-          listings_logements:logement_id ( title, city, listing_images ( image_url ) )
+          logement_id, vehicule_id, experience_id,
+          listings_logements:logement_id (
+            title, city,
+            listing_images ( image_url )
+          ),
+          listings_vehicules:vehicule_id (
+            marque, modele, city,
+            listing_images ( image_url )
+          ),
+          listings_experiences:experience_id (
+            title, city,
+            listing_images ( image_url )
+          )
         `)
         .eq("user_id", uid)
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false })
+        .returns<Row[]>();
+
       if (error) throw error;
-
-      setRows((data as Row[]) ?? []);
-
-      // Précharge léger (optionnel, non bloquant)
-      try {
-        const urls =
-          (data ?? [])
-            .flatMap((r: any) => {
-              const lg = first(r.listings_logements);
-              return lg?.listing_images?.map((x: any) => x?.image_url) ?? [];
-            })
-            .filter(Boolean)
-            .slice(0, 24);
-        FastImage.preload(
-          urls.map((u: string) => ({
-            uri: supaThumb(u),
-            priority: FastImage.priority.low,
-          }))
-        );
-      } catch {}
+      setRows(data ?? []);
     } catch (e) {
       console.error(e);
     } finally {
@@ -165,7 +124,7 @@ export default function ReservationsScreen({ navigation }: Props) {
 
   return (
     <View style={styles.root}>
-      {/* Fond doux façon iOS (pas de blur natif nécessaire) */}
+      {/* Fond doux */}
       <Image
         source={require("../../assets/images/logement.jpg")}
         style={StyleSheet.absoluteFillObject as any}
@@ -191,9 +150,7 @@ export default function ReservationsScreen({ navigation }: Props) {
         ) : empty ? (
           <View style={styles.center}>
             <Text style={styles.emptyTitle}>Aucune réservation</Text>
-            <Text style={styles.emptySub}>
-              Elles apparaîtront ici après votre première réservation.
-            </Text>
+            <Text style={styles.emptySub}>Elles apparaîtront ici après votre première réservation.</Text>
           </View>
         ) : (
           <FlatList
@@ -202,27 +159,46 @@ export default function ReservationsScreen({ navigation }: Props) {
             contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
             renderItem={({ item }) => {
-              // 🔒 garder TA logique, juste robustesse pour array/object
-              const lg = first(item.listings_logements);
-              const imgs = (lg?.listing_images ?? [])
-                .map((x) => x?.image_url)
-                .filter(Boolean) as string[];
+              // Détecte le type (logement / vehicule / experience)
+              const kind = item.logement_id ? "logement" : item.vehicule_id ? "vehicule" : "experience";
+              const L =
+                kind === "logement"
+                  ? item.listings_logements
+                  : kind === "vehicule"
+                  ? item.listings_vehicules
+                  : item.listings_experiences;
+
+              const imgs =
+                (L?.listing_images ?? [])
+                  .map((x) => x?.image_url || "")
+                  .filter(Boolean) as string[];
 
               const cover = imgs[0] || "";
               const second = imgs[1] || cover;
-              const title = lg?.title ?? "Logement";
-              const city = lg?.city ?? "";
-              const cur = item.currency ?? "XOF";
-              const range = fmtRange(item.start_date, item.end_date);
-              const status = mapStatus(item.status);
 
-              const coverUri = supaThumb(cover);
-              const secondUri = supaThumb(second);
+              const title =
+                kind === "vehicule"
+                  ? `${L?.marque ?? ""} ${L?.modele ?? ""}`.trim() || "Véhicule"
+                  : L?.title || (kind === "logement" ? "Logement" : "Expérience");
+
+              const city = L?.city ?? "";
+              const cur = (item.currency || "XOF") as string;
+              const range = fmtRange(item.start_date, item.end_date);
+              const status =
+                item.status === "confirmed"
+                  ? "Confirmée"
+                  : item.status === "pending"
+                  ? "En attente"
+                  : item.status === "cancelled"
+                  ? "Annulée"
+                  : item.status === "completed"
+                  ? "Terminée"
+                  : (item.status || "—");
 
               return (
                 <View style={styles.cardWrap}>
                   <View style={styles.card}>
-                    {/* titre + statut */}
+                    {/* Titre + statut */}
                     <View style={styles.cardHeader}>
                       <Text style={styles.cardTitle} numberOfLines={2}>
                         {title}
@@ -232,26 +208,27 @@ export default function ReservationsScreen({ navigation }: Props) {
                       </View>
                     </View>
 
-                    {/* ville + dates */}
+                    {/* Ville + dates + type */}
                     <Text style={styles.cardMeta} numberOfLines={1}>
-                      {city} • {range}
+                      {city ? `${city} • ` : ""}
+                      {range} • {kind === "logement" ? "Logement" : kind === "vehicule" ? "Véhicule" : "Expérience"}
                     </Text>
 
-                    {/* miniatures (2) */}
+                    {/* 2 miniatures */}
                     <View style={styles.thumbRow}>
-                      <FastImage
-                        source={coverUri ? { uri: coverUri, priority: FastImage.priority.normal } : PLACEHOLDER}
+                      <ImageBackground
+                        source={cover ? { uri: cover } : require("../../assets/images/logement.jpg")}
                         style={styles.thumb}
-                        resizeMode={FastImage.resizeMode.cover}
+                        imageStyle={styles.thumbImg}
                       />
-                      <FastImage
-                        source={secondUri ? { uri: secondUri, priority: FastImage.priority.normal } : PLACEHOLDER}
+                      <ImageBackground
+                        source={second ? { uri: second } : require("../../assets/images/logement.jpg")}
                         style={styles.thumb}
-                        resizeMode={FastImage.resizeMode.cover}
+                        imageStyle={styles.thumbImg}
                       />
                     </View>
 
-                    {/* total + bouton noir */}
+                    {/* Total + CTA */}
                     <View style={styles.footerRow}>
                       <View>
                         <Text style={styles.totalLabel}>Total</Text>
@@ -265,7 +242,6 @@ export default function ReservationsScreen({ navigation }: Props) {
                 </View>
               );
             }}
-            showsVerticalScrollIndicator={false}
           />
         )}
       </SafeAreaView>
@@ -288,20 +264,20 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   roundBtn: {
-    width: 40, height: 40, borderRadius: 20,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: "rgba(255,255,255,0.95)",
-    alignItems: "center", justifyContent: "center",
+    alignItems: "center",
+    justifyContent: "center",
   },
   title: { fontSize: 26, fontWeight: "900", color: "#111" },
 
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   emptyTitle: { fontSize: 20, fontWeight: "900", color: "#111" },
-  emptySub: {
-    marginTop: 6, color: "#666", fontWeight: "600",
-    textAlign: "center", paddingHorizontal: 16,
-  },
+  emptySub: { marginTop: 6, color: "#666", fontWeight: "600", textAlign: "center", paddingHorizontal: 16 },
 
-  // ——— Carte façon Apple
+  // Carte
   cardWrap: { marginBottom: 16 },
   card: {
     backgroundColor: "rgba(255,255,255,0.92)",
@@ -323,11 +299,10 @@ const styles = StyleSheet.create({
   pillTxt: { fontWeight: "800", color: "#111", fontSize: 12 },
 
   thumbRow: { flexDirection: "row", gap: 12, marginTop: 12 },
-  thumb: { flex: 1, height: THUMB_H, borderRadius: 14, overflow: "hidden" },
+  thumb: { flex: 1, height: 110, borderRadius: 14, overflow: "hidden" },
+  thumbImg: { borderRadius: 14 },
 
-  footerRow: {
-    marginTop: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-  },
+  footerRow: { marginTop: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   totalLabel: { color: "#6b6b6b", fontWeight: "700" },
   totalValue: { color: "#111", fontWeight: "900", fontSize: 18, marginTop: 2 },
 

@@ -562,7 +562,7 @@ export default function AvailabilityCalendarScreen({ route, navigation }: Props)
 const R = 18;
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#fff" },
+  root: { flex: 1, backgroundColor: "#c4c0c0ff" },
   safe: { flex: 1 },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
 

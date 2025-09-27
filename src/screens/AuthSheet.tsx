@@ -196,7 +196,7 @@ export default function AuthSheet({ navigation }: Props) {
       >
         <View style={styles.content}>
           {/* Logo/Title */}
-          <Text style={styles.brand}>FLEXII</Text>
+          <Text style={styles.brand}>FLEXIII</Text>
 
           {/* Card */}
           <View style={styles.card}>

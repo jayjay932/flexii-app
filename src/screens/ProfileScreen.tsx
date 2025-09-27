@@ -397,12 +397,19 @@ export default function ProfileScreen({ navigation }: Props) {
               onPress={() => navigation.navigate("PublishLogement")}
             />
           </View>
+          
 
           {/* Cartes longues (sans image) */}
           <LongCard
             title="modifier mon logement"
             subtitle="modifier ou supprimer une annonce"
             onPress={() => navigation.navigate("MyListings")}
+          />
+
+          <LongCards
+            title="publier un Véhicule"
+            subtitle="publier un Véhicule"
+            onPress={() => navigation.navigate("PublishVehicule")}
           />
 
           {/* Liste style “réglages” */}
@@ -600,6 +607,34 @@ function Tile({
   );
 }
 
+
+function LongCards({
+  title,
+  subtitle,
+  onPress,
+}: {
+  title: string;
+  subtitle?: string;
+  onPress?: () => void;
+}){
+  return (
+    <TouchableOpacity style={styles.longCard} onPress={onPress} activeOpacity={0.92}>
+      <Image
+        source={require("../../assets/images/vehicule.jpg")}
+        style={{ width: 56, height: 56, marginRight: 8, borderRadius: 10 }}
+      />
+      <View style={{ flex: 1 }}>
+        <Text style={styles.longTitle}>{title}</Text>
+        {!!subtitle && <Text style={styles.longSub}>{subtitle}</Text>}
+      </View>
+      <Ionicons name="chevron-forward" size={18} color="#999" />
+    </TouchableOpacity>
+  );
+}
+
+
+
+
 function LongCard({
   title,
   subtitle,
@@ -612,7 +647,7 @@ function LongCard({
   return (
     <TouchableOpacity style={styles.longCard} onPress={onPress} activeOpacity={0.92}>
       <Image
-        source={require("../../assets/images/logement2.jpg")}
+        source={require("../../assets/images/logement.jpg")}
         style={{ width: 56, height: 56, marginRight: 8, borderRadius: 10 }}
       />
       <View style={{ flex: 1 }}>

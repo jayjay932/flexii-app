@@ -12,7 +12,7 @@ export default function HomePage({ navigation }: any) {
 
   return (
     <ImageBackground
-      source={require("../../assets/images/logement.jpg")}
+      source={require("../../assets/images/vehicule.jpg")}
       style={styles.background}
     >
       <SafeAreaView style={styles.safe} edges={["top"]}>

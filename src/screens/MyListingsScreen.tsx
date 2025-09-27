@@ -1,24 +1,14 @@
-// src/screens/MyListingsScreen.tsx
-import React, {
-  memo,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  startTransition,
-} from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Image as RNImage,
+  Image,
   ActivityIndicator,
   RefreshControl,
   Alert,
-  Platform,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -44,117 +34,12 @@ type UnifiedListing = {
 };
 
 const money = (n: number, cur = "XOF") =>
-  new Intl.NumberFormat("fr-FR", { style: "currency", currency: cur }).format(
-    Number(n || 0)
-  );
+  new Intl.NumberFormat("fr-FR", { style: "currency", currency: cur }).format(Number(n || 0));
 
 const kindLabel: Record<Kind, string> = {
   logement: "Logement",
   vehicule: "Véhicule",
   experience: "Expérience",
-};
-
-/* ======== FastImage (fallback Image sur web ou si non dispo) ======== */
-let FastImageComp: any = RNImage;
-try {
-  if (Platform.OS !== "web") {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    FastImageComp = require("react-native-fast-image").default;
-  }
-} catch {
-  FastImageComp = RNImage;
-}
-
-const CoverImage = memo(function CoverImage({
-  uri,
-}: {
-  uri?: string | null;
-}) {
-  const source = uri
-    ? { uri, priority: FastImageComp.priority?.high }
-    : require("../../assets/images/logement.jpg");
-
-  return (
-    <FastImageComp
-      source={source}
-      style={styles.coverImg}
-      resizeMode={FastImageComp.resizeMode?.cover ?? "cover"}
-    />
-  );
-});
-
-/* ======== Card mémoïsé (évite les re-rendus) ======== */
-const ListingCard = memo(function ListingCard({
-  it,
-  onPressEdit,
-}: {
-  it: UnifiedListing;
-  onPressEdit: (it: UnifiedListing) => void;
-}) {
-  return (
-    <TouchableOpacity
-      key={`${it.kind}-${it.id}`}
-      style={styles.card}
-      onPress={() => onPressEdit(it)}
-      activeOpacity={0.95}
-    >
-      <View style={styles.cover}>
-        <CoverImage uri={it.image_url} />
-
-        {!it.is_approved && (
-          <View style={styles.badge}>
-            <View style={styles.badgeDot} />
-            <Text style={styles.badgeTxt}>Action requise</Text>
-          </View>
-        )}
-
-        <TouchableOpacity
-          style={styles.fab}
-          onPress={() => onPressEdit(it)}
-          activeOpacity={0.85}
-        >
-          <Ionicons name="create-outline" size={18} color="#fff" />
-        </TouchableOpacity>
-      </View>
-
-      <Text style={styles.title} numberOfLines={1}>
-        {it.title}
-      </Text>
-
-      <View style={styles.rowBetween}>
-        <Text style={styles.meta} numberOfLines={1}>
-          {kindLabel[it.kind]}
-          {it.city ? ` · ${it.city}` : ""}
-        </Text>
-        <Text style={styles.price}>
-          {money(it.price)} / {it.rental_type}
-        </Text>
-      </View>
-    </TouchableOpacity>
-  );
-});
-
-/* ======== shallow compare pour éviter setState inutiles ======== */
-const itemsShallowEqual = (a: UnifiedListing[], b: UnifiedListing[]) => {
-  if (a === b) return true;
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    const x = a[i],
-      y = b[i];
-    if (
-      x.id !== y.id ||
-      x.kind !== y.kind ||
-      x.title !== y.title ||
-      x.city !== y.city ||
-      x.price !== y.price ||
-      x.rental_type !== y.rental_type ||
-      x.is_approved !== y.is_approved ||
-      x.created_at !== y.created_at ||
-      x.image_url !== y.image_url
-    )
-      return false;
-  }
-  return true;
 };
 
 export default function MyListingsScreen({ navigation }: Props) {
@@ -163,17 +48,7 @@ export default function MyListingsScreen({ navigation }: Props) {
   const [items, setItems] = useState<UnifiedListing[]>([]);
   const [filter, setFilter] = useState<"tous" | Kind>("tous");
 
-  // anti-race
-  const reqSeq = useRef(0);
-  // debounce
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const debounced = useCallback((fn: () => void, d = 180) => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(fn, d);
-  }, []);
-
   const fetchAll = useCallback(async () => {
-    const ticket = ++reqSeq.current;
     try {
       setLoading(true);
       const { data: auth } = await supabase.auth.getSession();
@@ -183,153 +58,112 @@ export default function MyListingsScreen({ navigation }: Props) {
         return;
       }
 
-      // LOGEMENTS — LEFT JOIN + limit(1) sur la relation imbriquée
-      const { data: L, error: eL } = await supabase
-        .from("listings_logements")
-        .select(
-          `
-          id, owner_id, title, price, rental_type, city, is_approved, created_at,
-          listing_images ( image_url )
-        `
-        )
-        .eq("owner_id", uid)
-        .order("created_at", { ascending: false })
-        .limit(1, { foreignTable: "listing_images" }); // limite uniquement la table imbriquée
-      if (eL) throw eL;
+      // Logements (avec éventuelles images si la relation existe chez toi)
+      
 
-      const logements: UnifiedListing[] = (L || []).map((r: any) => ({
-        id: r.id,
-        kind: "logement",
-        title: r.title,
-        subtitle: r.city,
-        city: r.city,
-        price: Number(r.price || 0),
-        rental_type: r.rental_type,
-        is_approved: r.is_approved,
-        created_at: r.created_at,
-        image_url: r?.listing_images?.[0]?.image_url ?? null,
-      }));
+      // NOTE: si ta relation n'est pas "image_rel", remets le bon nom, ou supprime le select lié.
+      // LOGEMENTS — LEFT JOIN (par défaut) + limit(1) sur la table imbriquée
+const { data: L, error: eL } = await supabase
+  .from("listings_logements")
+  .select(`
+    id,
+    owner_id,
+    title,
+    price,
+    rental_type,
+    city,
+    is_approved,
+    created_at,
+    listing_images (
+      image_url
+    )
+  `)
+  .eq("owner_id", uid)
+  .order("created_at", { ascending: false })
+  .limit(1, { foreignTable: "listing_images" }); // ✅ limite la relation, pas le parent
 
-      // VÉHICULES — même principe (clé étrangère différente)
-      const { data: V, error: eV } = await supabase
-        .from("listings_vehicules")
-        .select(
-          `
-          id, owner_id, marque, modele, price, rental_type, city, is_approved, created_at,
-          listing_images!listing_images_vehicule_id_fkey ( image_url )
-        `
-        )
-        .eq("owner_id", uid)
-        .order("created_at", { ascending: false })
-        .limit(1, {
-          foreignTable: "listing_images!listing_images_vehicule_id_fkey",
-        });
-      if (eV) throw eV;
+if (eL) throw eL;
 
-      const vehicules: UnifiedListing[] = (V || []).map((v: any) => ({
-        id: v.id,
-        kind: "vehicule",
-        title: `${v.marque} ${v.modele}`.trim(),
-        subtitle: v.city,
-        city: v.city,
-        price: Number(v.price || 0),
-        rental_type: v.rental_type,
-        is_approved: v.is_approved ?? false,
-        created_at: v.created_at,
-        image_url: v?.listing_images?.[0]?.image_url ?? null,
-      }));
+const logements: UnifiedListing[] = (L || []).map((r: any) => ({
+  id: r.id,
+  kind: "logement",
+  title: r.title,
+  subtitle: r.city,
+  city: r.city,
+  price: Number(r.price || 0),
+  rental_type: r.rental_type,
+  is_approved: r.is_approved,
+  created_at: r.created_at,
+  image_url: r?.listing_images?.[0]?.image_url ?? null,
+}));
+// Véhicules
+const { data: V, error: eV } = await supabase
+  .from("listings_vehicules")
+  .select(`
+    id, marque, modele, price, rental_type, city, is_approved, created_at,
+    listing_images!listing_images_vehicule_id_fkey ( image_url )
+  `)
+  .eq("owner_id", uid)
+  .order("created_at", { ascending: false })
+  .limit(1, { foreignTable: "listing_images!listing_images_vehicule_id_fkey" });
+if (eV) throw eV;
 
-      // EXPÉRIENCES — idem
-      const { data: E, error: eE } = await supabase
-        .from("listings_experiences")
-        .select(
-          `
-          id, owner_id, title, category, price, rental_type, city, is_approved, created_at,
-          listing_images!listing_images_experience_id_fkey ( image_url )
-        `
-        )
-        .eq("owner_id", uid)
-        .order("created_at", { ascending: false })
-        .limit(1, {
-          foreignTable: "listing_images!listing_images_experience_id_fkey",
-        });
-      if (eE) throw eE;
+const vehicules: UnifiedListing[] = (V || []).map((v: any) => ({
+  id: v.id,
+  kind: "vehicule",
+  title: `${v.marque} ${v.modele}`,
+  subtitle: v.city,
+  city: v.city,
+  price: Number(v.price || 0),
+  rental_type: v.rental_type,
+  is_approved: v.is_approved ?? false,
+  created_at: v.created_at,
+  image_url: v?.listing_images?.[0]?.image_url ?? null,
+}));
 
-      const experiences: UnifiedListing[] = (E || []).map((x: any) => ({
-        id: x.id,
-        kind: "experience",
-        title: x.title,
-        subtitle: x.category || x.city,
-        city: x.city,
-        price: Number(x.price || 0),
-        rental_type: x.rental_type,
-        is_approved: x.is_approved ?? false,
-        created_at: x.created_at,
-        image_url: x?.listing_images?.[0]?.image_url ?? null,
-      }));
+// Expériences
+const { data: E, error: eE } = await supabase
+  .from("listings_experiences")
+  .select(`
+    id, title, category, price, rental_type, city, is_approved, created_at,
+    listing_images!listing_images_experience_id_fkey ( image_url )
+  `)
+  .eq("owner_id", uid)
+  .order("created_at", { ascending: false })
+  .limit(1, { foreignTable: "listing_images!listing_images_experience_id_fkey" });
+if (eE) throw eE;
 
-      const next = [...logements, ...vehicules, ...experiences].sort(
-        (a, b) =>
-          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+const experiences: UnifiedListing[] = (E || []).map((x: any) => ({
+  id: x.id,
+  kind: "experience",
+  title: x.title,
+  subtitle: x.category || x.city,
+  city: x.city,
+  price: Number(x.price || 0),
+  rental_type: x.rental_type,
+  is_approved: x.is_approved ?? false,
+  created_at: x.created_at,
+  image_url: x?.listing_images?.[0]?.image_url ?? null,
+}));
+
+
+      const all = [...logements, ...vehicules, ...experiences].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       );
-
-      if (ticket === reqSeq.current && !itemsShallowEqual(items, next)) {
-        startTransition(() => setItems(next));
-      }
+      setItems(all);
     } catch (e) {
       console.error(e);
       Alert.alert("Erreur", "Impossible de charger vos annonces.");
     } finally {
-      if (ticket === reqSeq.current) setLoading(false);
+      setLoading(false);
     }
-  }, [navigation, items]);
+  }, [navigation]);
 
   useEffect(() => {
     fetchAll();
-
-    // refetch au focus
     const unsub = navigation.addListener("focus", fetchAll);
-
-    // realtime léger (on écoute les 4 tables et on debounce le refetch)
-    let ch: ReturnType<typeof supabase.channel> | null = null;
-    (async () => {
-      try {
-        const { data: auth } = await supabase.auth.getSession();
-        const uid = auth.session?.user?.id;
-        if (!uid) return;
-
-        ch = supabase
-          .channel("mylistings-rt")
-          .on(
-            "postgres_changes",
-            { event: "*", schema: "public", table: "listings_logements", filter: `owner_id=eq.${uid}` },
-            () => debounced(fetchAll)
-          )
-          .on(
-            "postgres_changes",
-            { event: "*", schema: "public", table: "listings_vehicules", filter: `owner_id=eq.${uid}` },
-            () => debounced(fetchAll)
-          )
-          .on(
-            "postgres_changes",
-            { event: "*", schema: "public", table: "listings_experiences", filter: `owner_id=eq.${uid}` },
-            () => debounced(fetchAll)
-          )
-          .on(
-            "postgres_changes",
-            { event: "*", schema: "public", table: "listing_images" },
-            () => debounced(fetchAll)
-          )
-          .subscribe();
-      } catch {}
-    })();
-
-    return () => {
-      unsub();
-      if (ch) supabase.removeChannel(ch);
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [fetchAll, debounced, navigation]);
+    return unsub;
+  }, [fetchAll, navigation]);
 
   const onRefresh = useCallback(async () => {
     try {
@@ -345,12 +179,6 @@ export default function MyListingsScreen({ navigation }: Props) {
     [items, filter]
   );
 
-  const onPressEdit = useCallback(
-    (it: UnifiedListing) =>
-      navigation.navigate("EditListing", { id: it.id, kind: it.kind }),
-    [navigation]
-  );
-
   if (loading) {
     return (
       <View style={styles.center}>
@@ -364,12 +192,10 @@ export default function MyListingsScreen({ navigation }: Props) {
       <SafeAreaView edges={["top"]} style={styles.safe}>
         {/* Header */}
         <View style={styles.headerRow}>
-          <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            style={styles.roundBtn}
-          >
-            <Ionicons name="chevron-back" size={22} color="#111" />
-          </TouchableOpacity>
+          
+           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.roundBtn}>
+                                <Ionicons name="chevron-back" size={22} color="#111" />
+                              </TouchableOpacity>
           <Text style={styles.headerTitle}>Mes annonces</Text>
           <View style={{ flexDirection: "row", gap: 10 }}>
             <TouchableOpacity
@@ -433,7 +259,65 @@ export default function MyListingsScreen({ navigation }: Props) {
             </View>
           ) : (
             filtered.map((it) => (
-              <ListingCard key={`${it.kind}-${it.id}`} it={it} onPressEdit={onPressEdit} />
+              <TouchableOpacity
+                key={`${it.kind}-${it.id}`}
+                style={styles.card}
+                onPress={() =>
+                  navigation.navigate("EditListing", {
+                    id: it.id,
+                    kind: it.kind,
+                  })
+                }
+                activeOpacity={0.95}
+              >
+                <View style={styles.cover}>
+                  <Image
+                    source={
+                      it.image_url
+                        ? { uri: it.image_url }
+                        : require("../../assets/images/logement.jpg")
+                    }
+                    style={styles.coverImg}
+                  />
+                  {!it.is_approved && (
+                    <View style={styles.badge}>
+                      <View style={styles.badgeDot} />
+                      <Text style={styles.badgeTxt}>Action requise</Text>
+                    </View>
+                  )}
+
+                  {/* bouton crayon flottant */}
+                  <TouchableOpacity
+                    style={styles.fab}
+                    onPress={() =>
+                      navigation.navigate("EditListing", {
+                        id: it.id,
+                        kind: it.kind,
+                      })
+                    }
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="create-outline" size={18} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={styles.title} numberOfLines={1}>
+                  {it.title}
+                </Text>
+
+                <View style={styles.rowBetween}>
+                  <Text style={styles.meta} numberOfLines={1}>
+                    {kindLabel[it.kind]}
+                    {it.city ? ` · ${it.city}` : ""}
+                  </Text>
+                  <Text style={styles.price}>
+                    {money(it.price)} / {it.rental_type}
+                  </Text>
+                </View>
+
+                {/* bouton "Modifier" noir */}
+               
+              </TouchableOpacity>
             ))
           )}
         </ScrollView>
@@ -445,7 +329,7 @@ export default function MyListingsScreen({ navigation }: Props) {
 const R = 22;
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#fff" },
+  root: { flex: 1, backgroundColor: "rgba(255, 255, 255, 1)" },
   safe: { flex: 1 },
 
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
@@ -558,6 +442,19 @@ const styles = StyleSheet.create({
   },
   meta: { color: "#666", fontWeight: "700", flex: 1 },
   price: { color: "#111", fontWeight: "900" },
+
+  editBtn: {
+    marginTop: 10,
+    alignSelf: "flex-start",
+    backgroundColor: "#000000ff",
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  editTxt: { color: "#fff", fontWeight: "900" },
 
   empty: { alignItems: "center", marginTop: 80, paddingHorizontal: 20 },
   emptyTitle: { fontSize: 20, fontWeight: "900", color: "#111" },

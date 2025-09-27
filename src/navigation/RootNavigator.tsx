@@ -23,37 +23,51 @@ import AvailabilityDashboardScreen from "@/src/screens/AvailabilityDashboardScre
 import AvailabilityCalendarScreen from "@/src/screens/AvailabilityCalendarScreen";
 import PublishLogementWizard from "../screens/PublishLogementWizard";
 import LogementsFilters from "../screens/LogementsFilters";
+import VehiculesScreen from "../screens/VehiculesScreen";
+import VehiculeDetailsScreen from "../screens/VehiculeDetailsScreen";
+import PublishVehiculeScreen from "../screens/PublishVehiculeScreen";
+import ProfileScreenVehicules from "../screens/ProfileScreenVehicules";
 
 
-// ...
+// ..
+type Money = "XOF" | "EUR";
+
+type DraftBase = {
+  startDate: string;
+  endDate: string;
+  unitPrice: number;
+  addOns?: { id: string; name: string; price: number; pricing_model: string }[];
+  selectedAddOnIds?: string[];
+  guests?: number;
+  currency?: Money;
+};
+
 export type RootStackParamList = {
   Welcome: undefined;
   Home: undefined;
   Logements: undefined;
   Vehicules: undefined;
   Experiences: undefined;
-PublishLogement: undefined;
+  PublishLogement: undefined;
   LogementsFilters: undefined;
-  BookingSummary: { listingId: string; acceptedPrice?: number };
 
+  BookingSummary: { listingId: string; acceptedPrice?: number };
   AllReviews: { listingId: string; title?: string };
 
-
-
-  // 💬 Chat: on ajoute 2 champs optionnels
   Chat: {
     listingId: string;
     ownerId: string;
     listingTitle: string;
-    conversationId?: string;        // ✅ permet d’ouvrir une conv précise
-
-    forceOpenNegotiation?: boolean; // ✅ ouvre le composer en mode négo
+    conversationId?: string;
+    forceOpenNegotiation?: boolean;
   };
+
   OwnerReservationDetails: { id: string };
 
   AuthSheet: undefined;
   Conversations: undefined;
   Profile: undefined;
+  profileVehicules: undefined;
   Revenus: undefined;
   ReservationsRecues: undefined;
   AccountSettings: undefined;
@@ -62,51 +76,53 @@ PublishLogement: undefined;
   Privacy: undefined;
   MyListings: undefined;
   PublishListing: undefined;
+  PublishVehicule: undefined;
+
   AvailabilityDashboard: undefined;
   AvailabilityCalendar: {
-    kind: 'logement' | 'vehicule' | 'experience';
+    kind: "logement" | "vehicule" | "experience";
     id: string;
     title?: string;
     basePrice?: number | null;
     currency?: string | null;
   };
-  
-  
+
   EditListing: { id: string; kind: "logement" | "vehicule" | "experience" };
   Legal: undefined;
 
-  /* Onglets supplémentaires */
   Explorer: undefined;
   Favorites: undefined;
 
-Checkout: {
-    // soit on vient avec un draft (rien en BDD)
-    draft?: {
-      logementId: string;
-      startDate: string;
-      endDate: string;
-      unitPrice: number;
-      addOns?: { id: string; name: string; price: number; pricing_model: string }[];
-      selectedAddOnIds?: string[];
-      guests?: number;
-      currency?: "XOF" | "EUR";
+  // ✅ Checkout accepte logement OU véhicule (rétro-compatible).
+  Checkout: {
+    draft?: DraftBase & {
+      logementId?: string;   // ← reste OK pour tes pages logements
+      vehiculeId?: string;   // ← permet tes nouveaux flux véhicules
+      experienceId?: string; // (si tu en as besoin plus tard)
     };
-    // soit (optionnel) un id existant si tu veux encore supporter l'ancien flux
     reservationId?: string;
     step?: 1 | 2 | 3;
   };
-  ReservationDetails: { id: string }; // si tu veux un écran de détail
+
+  VehiculeDetails: {
+    id: string;
+    resetFromChatReserve?: boolean;
+    negotiatedUnitPrice?: number;
+    resetFromCheckout?: boolean;
+  };
+
+  ExperienceDetails: { id: string };
+  ReservationDetails: { id: string };
   Reservations: undefined;
+
   HostProfile: { hostId: string; hostName?: string; avatarUrl?: string | null };
-LogementDetails: {
-  id: string;
-  resetFromChatReserve?: boolean;   // ouvre le calendrier à l’arrivée depuis chat
-  negotiatedUnitPrice?: number;     // prix accepté (par nuit)
-  resetFromCheckout?: boolean;
-};
 
-
- 
+  LogementDetails: {
+    id: string;
+    resetFromChatReserve?: boolean;
+    negotiatedUnitPrice?: number;
+    resetFromCheckout?: boolean;
+  };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -141,6 +157,7 @@ export default function RootNavigator() {
 
 <Stack.Screen name="Reservations" component={ReservationsScreen} options={{ headerShown: false }} />
 <Stack.Screen name="ReservationDetails" component={ReservationDetailsScreen} />
+<Stack.Screen name="VehiculeDetails" component={VehiculeDetailsScreen} />
     <Stack.Screen
   name="LogementsFilters"
   component={LogementsFilters}
@@ -153,17 +170,24 @@ export default function RootNavigator() {
 />
 
 
+
+
 <Stack.Screen
   name="Checkout"
   component={CheckoutScreen}
   options={{ headerShown: false }}
 />
 
+<Stack.Screen name="Experiences" component={LogementsScreen} />
+      <Stack.Screen name="Vehicules" component={ VehiculesScreen} />
+
 
 
       <Stack.Screen name="AvailabilityCalendar" component={AvailabilityCalendarScreen} />
       <Stack.Screen name="AvailabilityDashboard" component={AvailabilityDashboardScreen} options={{ headerShown: false }} />
       <Stack.Screen name="Profile" component={ProfileScreen} />
+    
+
 
       
 <Stack.Screen name="MyListings" component={MyListingsScreen} options={{ headerShown: false }} />
@@ -189,6 +213,11 @@ export default function RootNavigator() {
 <Stack.Screen
   name="PublishLogement"
   component={PublishLogementWizard}
+  options={{ headerShown: false, presentation: "modal" }}
+/>
+<Stack.Screen
+  name="PublishVehicule"
+  component={PublishVehiculeScreen}
   options={{ headerShown: false, presentation: "modal" }}
 />
 

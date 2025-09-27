@@ -24,7 +24,7 @@ export default function WelcomeScreen({ navigation }: Props) {
       style={styles.background}
     >
       <View style={styles.container}>
-        <Text style={styles.title}>Flexii</Text>
+        <Text style={styles.title}>FlexiIi</Text>
         <TouchableOpacity
           style={styles.button}
           onPress={() => navigation.navigate("Home")}

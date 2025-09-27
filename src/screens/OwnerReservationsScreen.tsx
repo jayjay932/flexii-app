@@ -7,15 +7,12 @@ import {
   FlatList,
   TouchableOpacity,
   ActivityIndicator,
+  ImageBackground,
   RefreshControl,
   Platform,
-  Dimensions,
-  PixelRatio,
-  Image, // pour le fond flou
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Ionicons from "react-native-vector-icons/Ionicons";
-import FastImage from "react-native-fast-image";
 import { supabase } from "@/src/lib/supabase";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "@/src/navigation/RootNavigator";
@@ -26,7 +23,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "ReservationsRecues">;
 type AnyListing = {
   title?: string | null;
   city?: string | null;
-  listing_images?: { image_url: string | null }[];
+  listing_images?: { image_url: string | null }[] | null;
   marque?: string | null; // véhicule
   modele?: string | null; // véhicule
 };
@@ -43,70 +40,37 @@ type Row = {
   logement_id: string | null;
   vehicule_id: string | null;
   experience_id: string | null;
-  // Ces trois champs sont ceux que TU consommes dans le render :
   listings_logements?: AnyListing | null;
   listings_vehicules?: AnyListing | null;
   listings_experiences?: AnyListing | null;
-  // Suivant tes selects, Supabase peut aussi renvoyer:
-  logement?: AnyListing | AnyListing[] | null;
-  vehicule?: AnyListing | AnyListing[] | null;
-  experience?: AnyListing | AnyListing[] | null;
 };
 
 const money = (n: number, cur = "XOF") =>
-  new Intl.NumberFormat("fr-FR", { style: "currency", currency: (cur as any) || "XOF" }).format(
+  new Intl.NumberFormat("fr-FR", { style: "currency", currency: cur as any, maximumFractionDigits: 0 }).format(
     Number(n || 0)
   );
 
 const fmtRange = (a: string, b: string) => {
-  const A = new Date(a),
-    B = new Date(b);
+  const A = new Date(a), B = new Date(b);
   const opt: Intl.DateTimeFormatOptions = { day: "2-digit", month: "short" };
   return `${A.toLocaleDateString("fr-FR", opt)} – ${B.toLocaleDateString("fr-FR", opt)}`;
 };
 
 // PostgREST peut renvoyer un tableau sur les relations → on prend le 1er
 function takeOne<T>(val: T | T[] | null | undefined): T | null {
-  if (!val) return null;
-  return Array.isArray(val) ? (val[0] as T) ?? null : (val as T);
+  if (Array.isArray(val)) return (val[0] as T) ?? null;
+  return (val ?? null) as T | null;
 }
-
-/* ------- Helpers images (miniatures Supabase + cache) ------- */
-const { width: SCREEN_W } = Dimensions.get("window");
-const THUMB_H = 110;
-const THUMB_W = (SCREEN_W - 16 * 2 - 12) / 2; // 2 colonnes, padding 16, gap 12
-const PLACEHOLDER1 = require("../../assets/images/logement2.jpg");
-const PLACEHOLDER2 = require("../../assets/images/logement.jpg");
-
-const supaThumb = (
-  url?: string | null,
-  w = THUMB_W,
-  h = THUMB_H,
-  q = 70,
-  mode: "cover" | "contain" = "cover"
-) => {
-  if (!url) return undefined;
-  try {
-    if (url.includes("/storage/v1/object/public/")) {
-      const [base] = url.split("?");
-      const render = base.replace("/object/public/", "/render/image/public/");
-      const pxW = Math.min(Math.round(w * PixelRatio.get()), 1000);
-      const pxH = Math.min(Math.round(h * PixelRatio.get()), 1000);
-      return `${render}?width=${pxW}&height=${pxH}&quality=${q}&resize=${mode}`;
-    }
-  } catch {}
-  return url || undefined;
-};
 
 export default function OwnerReservationsScreen({ navigation }: Props) {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // —— Anti-race condition (ignore les réponses obsolètes) ——
+  // —— Anti-race condition
   const reqSeq = useRef(0);
 
-  // —— Debounce (typé de façon portable RN/Web) ——
+  // —— Debounce
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const debounced = useCallback((fn: () => void, delay = 200) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -125,55 +89,60 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
           return;
         }
 
-        // —— Logements (⚠️ je garde TA requête et ta logique)
+        // LOGEMENTS (inner join + filtres owner + photos)
         const qL = await supabase
           .from("reservations")
           .select(
             `
             id, created_at, start_date, end_date, status, total_price, currency, espece_confirmation,
             logement_id, vehicule_id, experience_id,
-            transactions!inner ( status ),
-            logement:logement_id!inner ( id, title, owner_id, city, listing_images ( image_url ) )
+            logement:logement_id!inner (
+              id, title, city, owner_id,
+              listing_images ( image_url )
+            )
           `
           )
           .eq("logement.owner_id", uid)
-          .order("start_date", { ascending: false });
+          .order("created_at", { ascending: false });
 
-        // —— Véhicules
+        // VEHICULES
         const qV = await supabase
           .from("reservations")
           .select(
             `
             id, created_at, start_date, end_date, status, total_price, currency, espece_confirmation,
             logement_id, vehicule_id, experience_id,
-            transactions!inner ( status ),
-            vehicule:vehicule_id!inner ( id, title, owner_id, marque, modele, city, listing_images ( image_url ) )
+            vehicule:vehicule_id!inner (
+              id, marque, modele, city, owner_id,
+              listing_images ( image_url )
+            )
           `
           )
           .eq("vehicule.owner_id", uid)
-          .order("start_date", { ascending: false });
+          .order("created_at", { ascending: false });
 
-        // —— Expériences
+        // EXPERIENCES (si tu les utilises)
         const qE = await supabase
           .from("reservations")
           .select(
             `
             id, created_at, start_date, end_date, status, total_price, currency, espece_confirmation,
             logement_id, vehicule_id, experience_id,
-            transactions!inner ( status ),
-            experience:experience_id!inner ( id, title, owner_id, city, listing_images ( image_url ) )
+            experience:experience_id!inner (
+              id, title, city, owner_id,
+              listing_images ( image_url )
+            )
           `
           )
           .eq("experience.owner_id", uid)
-          .order("start_date", { ascending: false });
+          .order("created_at", { ascending: false });
 
-        const [L, V, E] = await Promise.all([qL, qV, qE]);
-        if (L.error) throw L.error;
-        if (V.error) throw V.error;
-        if (E.error) throw E.error;
+        if (qL.error) throw qL.error;
+        if (qV.error) throw qV.error;
+        if (qE.error) throw qE.error;
 
-        // Normalisation (⚠️ je ne change pas ta logique d’affichage : je remplis juste les champs attendus)
-        const normL: Row[] = (L.data as any[]).map((r) => ({
+        // Normalisation
+        const normL: Row[] = (qL.data as any[]).map((r) => ({
           id: r.id,
           created_at: r.created_at,
           start_date: r.start_date,
@@ -181,18 +150,16 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
           total_price: r.total_price,
           currency: r.currency,
           status: r.status,
-          espece_confirmation: r.espece_confirmation ?? null,
-          logement_id: r.logement_id ?? r.logement?.id ?? null,
-          vehicule_id: r.vehicule_id ?? null,
-          experience_id: r.experience_id ?? null,
-          // supporte 'logement' ou 'listings_logements'
-          listings_logements: (takeOne<AnyListing>(r.listings_logements) ??
-            takeOne<AnyListing>(r.logement)) as AnyListing | null,
+          espece_confirmation: r.espece_confirmation,
+          logement_id: r.logement_id,
+          vehicule_id: r.vehicule_id,
+          experience_id: r.experience_id,
+          listings_logements: takeOne<AnyListing>(r.logement),
           listings_vehicules: null,
           listings_experiences: null,
         }));
 
-        const normV: Row[] = (V.data as any[]).map((r) => ({
+        const normV: Row[] = (qV.data as any[]).map((r) => ({
           id: r.id,
           created_at: r.created_at,
           start_date: r.start_date,
@@ -200,18 +167,16 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
           total_price: r.total_price,
           currency: r.currency,
           status: r.status,
-          espece_confirmation: r.espece_confirmation ?? null,
-          logement_id: r.logement_id ?? null,
-          vehicule_id: r.vehicule_id ?? r.vehicule?.id ?? null,
-          experience_id: r.experience_id ?? null,
+          espece_confirmation: r.espece_confirmation,
+          logement_id: r.logement_id,
+          vehicule_id: r.vehicule_id,
+          experience_id: r.experience_id,
           listings_logements: null,
-          // supporte 'vehicule' ou 'listings_vehicules'
-          listings_vehicules: (takeOne<AnyListing>(r.listings_vehicules) ??
-            takeOne<AnyListing>(r.vehicule)) as AnyListing | null,
+          listings_vehicules: takeOne<AnyListing>(r.vehicule),
           listings_experiences: null,
         }));
 
-        const normE: Row[] = (E.data as any[]).map((r) => ({
+        const normE: Row[] = (qE.data as any[]).map((r) => ({
           id: r.id,
           created_at: r.created_at,
           start_date: r.start_date,
@@ -219,15 +184,13 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
           total_price: r.total_price,
           currency: r.currency,
           status: r.status,
-          espece_confirmation: r.espece_confirmation ?? null,
-          logement_id: r.logement_id ?? null,
-          vehicule_id: r.vehicule_id ?? null,
-          experience_id: r.experience_id ?? r.experience?.id ?? null,
+          espece_confirmation: r.espece_confirmation,
+          logement_id: r.logement_id,
+          vehicule_id: r.vehicule_id,
+          experience_id: r.experience_id,
           listings_logements: null,
           listings_vehicules: null,
-          // supporte 'experience' ou 'listings_experiences'
-          listings_experiences: (takeOne<AnyListing>(r.listings_experiences) ??
-            takeOne<AnyListing>(r.experience)) as AnyListing | null,
+          listings_experiences: takeOne<AnyListing>(r.experience),
         }));
 
         const merged = [...normL, ...normV, ...normE].sort(
@@ -235,20 +198,6 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
         );
 
         if (ticket === reqSeq.current) setRows(merged);
-
-        // Précharge léger (non bloquant)
-        try {
-          const urls =
-            merged
-              .flatMap((it) => {
-                const Lst =
-                  it.listings_logements ?? it.listings_vehicules ?? it.listings_experiences;
-                return Lst?.listing_images?.map((x) => x?.image_url) ?? [];
-              })
-              .filter(Boolean)
-              .slice(0, 30) as string[];
-          FastImage.preload(urls.map((u) => ({ uri: supaThumb(u), priority: FastImage.priority.low })));
-        } catch {}
       } catch (e) {
         console.error(e);
       } finally {
@@ -261,10 +210,9 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
   useEffect(() => {
     fetchData();
 
-    // re-fetch rapide au retour sur l’écran
     const offFocus = navigation.addListener("focus", () => fetchData(true));
 
-    // —— Realtime —— (patch local immédiat sur UPDATE)
+    // —— Realtime (UPDATE/INSERT/DELETE) ——
     const ch = supabase
       .channel("owner-reservations-rt")
       .on(
@@ -277,7 +225,6 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
             espece_confirmation?: boolean | null;
           };
 
-          // Patch local instantané (évite l’ancien statut “En attente”)
           setRows((prev) =>
             prev.map((x) =>
               x.id === r.id
@@ -293,24 +240,17 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
             )
           );
 
-          // petit resync silencieux pour les relations/joins
           debounced(() => fetchData(true), 200);
         }
       )
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "reservations" },
-        () => debounced(() => fetchData(true), 150)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "reservations" }, () =>
+        debounced(() => fetchData(true), 150)
       )
-      .on(
-        "postgres_changes",
-        { event: "DELETE", schema: "public", table: "reservations" },
-        (payload: any) => {
-          const id = payload.old?.id as string | undefined;
-          if (!id) return;
-          setRows((prev) => prev.filter((x) => x.id !== id));
-        }
-      )
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "reservations" }, (payload: any) => {
+        const id = payload.old?.id as string | undefined;
+        if (!id) return;
+        setRows((prev) => prev.filter((x) => x.id !== id));
+      })
       .subscribe();
 
     return () => {
@@ -339,8 +279,7 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
 
   return (
     <View style={styles.root}>
-      {/* Fond doux */}
-      <Image
+      <ImageBackground
         source={require("../../assets/images/logement.jpg")}
         style={StyleSheet.absoluteFillObject as any}
         blurRadius={Platform.OS === "android" ? 8 : 12}
@@ -373,7 +312,6 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
             keyExtractor={(it) => it.id}
             contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-            showsVerticalScrollIndicator={false}
             renderItem={({ item }) => {
               const kind = item.logement_id
                 ? "logement"
@@ -388,9 +326,13 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
                   ? item.listings_vehicules
                   : item.listings_experiences;
 
-              const imgs = L?.listing_images?.map((x) => x?.image_url).filter(Boolean) ?? [];
-              const cover = (imgs[0] as string) || "";
-              const second = (imgs[1] as string) || cover;
+              const imgs =
+                (L?.listing_images ?? [])
+                  .map((x) => x?.image_url || "")
+                  .filter(Boolean) as string[];
+
+              const cover = imgs[0] || "";
+              const second = imgs[1] || cover;
 
               const title =
                 kind === "vehicule"
@@ -398,8 +340,9 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
                   : L?.title || (kind === "logement" ? "Logement" : "Expérience");
 
               const city = L?.city ?? "";
-              const cur = item.currency ?? "XOF";
+              const cur = (item.currency || "XOF") as string;
               const range = fmtRange(item.start_date, item.end_date);
+
               const status =
                 item.status === "confirmed"
                   ? "Confirmée"
@@ -407,10 +350,9 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
                   ? "En attente"
                   : item.status === "cancelled"
                   ? "Annulée"
-                  : "Terminée";
-
-              const coverUri = supaThumb(cover);
-              const secondUri = supaThumb(second);
+                  : item.status === "completed"
+                  ? "Terminée"
+                  : (item.status || "—");
 
               return (
                 <View style={styles.cardWrap}>
@@ -425,20 +367,20 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
                     </View>
 
                     <Text style={styles.cardMeta} numberOfLines={1}>
-                      {city} • {range} •{" "}
-                      {kind === "logement" ? "Logement" : kind === "vehicule" ? "Véhicule" : "Expérience"}
+                      {city ? `${city} • ` : ""}
+                      {range} • {kind === "logement" ? "Logement" : kind === "vehicule" ? "Véhicule" : "Expérience"}
                     </Text>
 
                     <View style={styles.thumbRow}>
-                      <FastImage
-                        source={coverUri ? { uri: coverUri, priority: FastImage.priority.normal } : PLACEHOLDER1}
+                      <ImageBackground
+                        source={cover ? { uri: cover } : require("../../assets/images/logement2.jpg")}
                         style={styles.thumb}
-                        resizeMode={FastImage.resizeMode.cover}
+                        imageStyle={styles.thumbImg}
                       />
-                      <FastImage
-                        source={secondUri ? { uri: secondUri, priority: FastImage.priority.normal } : PLACEHOLDER2}
+                      <ImageBackground
+                        source={second ? { uri: second } : require("../../assets/images/logement.jpg")}
                         style={styles.thumb}
-                        resizeMode={FastImage.resizeMode.cover}
+                        imageStyle={styles.thumbImg}
                       />
                     </View>
 
@@ -516,7 +458,8 @@ const styles = StyleSheet.create({
   pillTxt: { fontWeight: "800", color: "#111", fontSize: 12 },
 
   thumbRow: { flexDirection: "row", gap: 12, marginTop: 12 },
-  thumb: { flex: 1, height: THUMB_H, borderRadius: 14, overflow: "hidden" },
+  thumb: { flex: 1, height: 110, borderRadius: 14, overflow: "hidden" },
+  thumbImg: { borderRadius: 14 },
 
   footerRow: { marginTop: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   totalLabel: { color: "#6b6b6b", fontWeight: "700" },

@@ -11,27 +11,34 @@ import {
   Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons"; // si pas Expo: import Ionicons from "react-native-vector-icons/Ionicons";
+import { Ionicons } from "@expo/vector-icons";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { supabase } from "@/src/lib/supabase";
 import type { RootStackParamList } from "@/src/navigation/RootNavigator";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Checkout">;
 
-// --- Génération d’un code unique (ex: TG-AB12-XY34) ---
+/* ---------- Helpers ---------- */
+const money = (n: number, cur = "XOF") =>
+  new Intl.NumberFormat("fr-FR", { style: "currency", currency: cur }).format(n);
+
+const SERVICE_FEE_PER_NIGHT = 0 as const;
+
 const genReservationCode = () =>
   (
     "TG-" +
-    Math.random().toString(36).slice(2, 6) + // 4 aléatoires
+    Math.random().toString(36).slice(2, 6) +
     "-" +
-    Date.now().toString(36).slice(-4) // 4 sur l’horodatage
+    Date.now().toString(36).slice(-4)
   )
     .replace(/[^A-Z0-9-]/gi, "")
     .toUpperCase();
 
-type Reservation = {
+/* ---------- Types BDD minimales ---------- */
+type ReservationRow = {
   id: string;
   logement_id: string | null;
+  vehicule_id: string | null;
   start_date: string;
   end_date: string;
   unit_price: number | null;
@@ -42,88 +49,166 @@ type Reservation = {
   guest_info: any | null;
 };
 
-type Logement = {
+type LogementRow = {
   id: string;
   title: string;
   price: number;
   city: string;
   listing_images?: { image_url: string | null }[];
-  reviews_count?: number | null;
-  rating?: number | null;
 };
 
-const money = (n: number, cur = "XOF") =>
-  new Intl.NumberFormat("fr-FR", { style: "currency", currency: cur }).format(n);
+type VehiculeRow = {
+  id: string;
+  marque: string;
+  modele: string;
+  annee: number | null;
+  price: number;
+  city: string;
+  rental_type?: string | null;
+  listing_images?: { image_url: string | null }[];
+};
 
-// Frais app par nuit
-const SERVICE_FEE_PER_NIGHT =  0 as const;
+/* ---------- État visuel générique (carte en haut) ---------- */
+type Subject =
+  | {
+      kind: "logement";
+      id: string;
+      title: string;
+      subtitle?: string;
+      rating?: number | null;
+      reviews?: number | null;
+      cover?: string | null;
+      price: number;
+    }
+  | {
+      kind: "vehicule";
+      id: string;
+      title: string; // ex: "BMW M3 · 2020"
+      subtitle?: string; // ville
+      rating?: number | null;
+      reviews?: number | null;
+      cover?: string | null;
+      price: number;
+    };
 
 export default function CheckoutScreen({ route, navigation }: Props) {
   const { reservationId, draft, step: stepFromRoute = 1 } = route.params;
 
+  // véh./logement depuis le draft
+  const draftAny = draft as any;
+  const vehiculeIdFromDraft = (draftAny?.vehiculeId as string | undefined) || undefined;
+  const logementIdFromDraft = draft?.logementId;
+
   const [loading, setLoading] = useState(true);
-  const [res, setRes] = useState<Reservation | null>(null);
-  const [logement, setLogement] = useState<Logement | null>(null);
+  const [res, setRes] = useState<ReservationRow | null>(null);
+
+  const [subject, setSubject] = useState<Subject | null>(null); // carte du haut
+  const [payChoice, setPayChoice] = useState<"service_fee_only" | "all_online">("service_fee_only");
   const [paying, setPaying] = useState(false);
   const [step, setStep] = useState<1 | 2 | 3>((stepFromRoute as 1 | 2 | 3) ?? 1);
   const NEXT: Record<1 | 2 | 3, 1 | 2 | 3> = { 1: 2, 2: 3, 3: 3 };
 
-  type PayChoice = "service_fee_only" | "all_online";
-  const [payChoice, setPayChoice] = useState<PayChoice>("service_fee_only");
+  /** ------- helpers de chargement sûrs ------- */
+  const loadVehiculeSubject = async (vehId: string): Promise<Subject | null> => {
+    const { data: v, error } = await supabase
+      .from("listings_vehicules")
+      .select(`id, marque, modele, annee, price, city, rental_type, listing_images(image_url)`)
+      .eq("id", vehId)
+      .maybeSingle<VehiculeRow>();
+    if (error) throw error;
+    if (!v) return null;
+    return {
+      kind: "vehicule",
+      id: v.id,
+      title: `${v.marque ?? ""} ${v.modele ?? ""}${v.annee ? ` · ${v.annee}` : ""}`.trim(),
+      subtitle: v.city,
+      cover: v.listing_images?.[0]?.image_url ?? undefined,
+      price: Number(v.price),
+    };
+  };
 
-  // Chargement initial (draft vs réservation existante)
+  const loadLogementSubject = async (logId: string): Promise<Subject | null> => {
+    // ⚠️ IMPORTANT: ne pas demander 'reviews_count' / 'rating' si elles n’existent pas chez toi
+    const { data: l, error } = await supabase
+      .from("listings_logements")
+      .select(`id, title, price, city, listing_images(image_url)`)
+      .eq("id", logId)
+      .maybeSingle<LogementRow>();
+    if (error) throw error;
+    if (!l) return null;
+    return {
+      kind: "logement",
+      id: l.id,
+      title: l.title,
+      subtitle: l.city,
+      rating: null, // valeur par défaut (tu peux les brancher plus tard)
+      reviews: null,
+      cover: l.listing_images?.[0]?.image_url ?? undefined,
+      price: Number(l.price),
+    };
+  };
+
+  /* ---------- Chargement initial ---------- */
   useEffect(() => {
     (async () => {
       try {
         setLoading(true);
 
+        // 1) Mode DRAFT (depuis un détail)
         if (draft) {
-          const { data: l } = await supabase
-            .from("listings_logements")
-            .select(
-              `id, title, price, city, reviews_count, rating, listing_images(image_url)`
-            )
-            .eq("id", draft.logementId)
-            .maybeSingle<Logement>();
-          setLogement(l || null);
-          setRes(null);
-        } else if (reservationId) {
+          if (vehiculeIdFromDraft) {
+            const subj = await loadVehiculeSubject(vehiculeIdFromDraft);
+            setSubject(subj);
+            setRes(null);
+          } else if (logementIdFromDraft) {
+            const subj = await loadLogementSubject(logementIdFromDraft);
+            setSubject(subj);
+            setRes(null);
+          } else {
+            throw new Error("Draft invalide : aucun identifiant.");
+          }
+        }
+
+        // 2) Mode “reservation existante”
+        else if (reservationId) {
           const { data: r, error } = await supabase
             .from("reservations")
             .select(
-              `id, logement_id, start_date, end_date, unit_price, total_price, currency, status, guests_count, guest_info`
+              `id, logement_id, vehicule_id, start_date, end_date, unit_price, total_price, currency, status, guests_count, guest_info`
             )
             .eq("id", reservationId)
-            .maybeSingle<Reservation>();
+            .maybeSingle<ReservationRow>();
           if (error) throw error;
           setRes(r || null);
 
-          if (r?.logement_id) {
-            const { data: l } = await supabase
-              .from("listings_logements")
-              .select(
-                `id, title, price, city, reviews_count, rating, listing_images(image_url)`
-              )
-              .eq("id", r.logement_id)
-              .maybeSingle<Logement>();
-            setLogement(l || null);
+          if (r?.vehicule_id) {
+            const subj = await loadVehiculeSubject(r.vehicule_id);
+            setSubject(subj);
+          } else if (r?.logement_id) {
+            const subj = await loadLogementSubject(r.logement_id);
+            setSubject(subj);
+          } else {
+            throw new Error("Réservation sans cible (logement/vehicule).");
           }
+        } else {
+          throw new Error("Paramètres manquants.");
         }
-      } catch (e) {
-        console.error(e);
+      } catch (e: any) {
+        console.error("[Checkout] load error:", e?.message ?? e);
         Alert.alert("Erreur", "Impossible de charger les données.");
       } finally {
         setLoading(false);
       }
     })();
-  }, [reservationId, draft]);
+  }, [reservationId, draft, logementIdFromDraft, vehiculeIdFromDraft]);
 
+  /* ---------- Données calculées ---------- */
   const cur = draft?.currency || res?.currency || "XOF";
-  const unit = draft?.unitPrice ?? res?.unit_price ?? logement?.price ?? 0;
+  const unit = draft?.unitPrice ?? res?.unit_price ?? subject?.price ?? 0;
 
-  // Dates + nuits
   const startISO: string = draft?.startDate ?? res?.start_date ?? "";
   const endISO: string = draft?.endDate ?? res?.end_date ?? "";
+
   const nights = useMemo(() => {
     const s = new Date(startISO).getTime();
     const e = new Date(endISO).getTime();
@@ -134,7 +219,7 @@ export default function CheckoutScreen({ route, navigation }: Props) {
     return 1;
   }, [startISO, endISO]);
 
-  // Add-ons
+  // Add-ons (logements pour l’instant)
   const addOns = draft?.addOns ?? (res?.guest_info?.add_ons ?? []);
   const selectedIds =
     draft?.selectedAddOnIds ?? (addOns?.map((a: any) => a.id) ?? []);
@@ -149,28 +234,24 @@ export default function CheckoutScreen({ route, navigation }: Props) {
     return total;
   }, [addOns, selectedIds, nights]);
 
-  // Totaux
   const base = unit * nights;
-  const serviceFeeTotal = SERVICE_FEE_PER_NIGHT * nights; // commission app
+  const serviceFeeTotal = SERVICE_FEE_PER_NIGHT * nights;
   const totalDueHost = base + addOnsTotal;
-  const grandTotal = totalDueHost; // total du séjour
-  const espece = grandTotal - serviceFeeTotal; // part à régler sur place
+  const grandTotal = totalDueHost;
+  const espece = Math.max(grandTotal - serviceFeeTotal, 0);
 
-  // Fermer
+  const cover = subject?.cover || undefined;
+
+  /* ---------- Handlers ---------- */
   const handleClose = () => {
-    const targetId =
-      draft?.logementId ?? res?.logement_id ?? logement?.id;
-    if (!targetId) {
-      Alert.alert("Oups", "Logement introuvable.");
-      return;
+    if (!subject) return;
+    if (subject.kind === "vehicule") {
+      navigation.navigate("VehiculeDetails", { id: subject.id, resetFromCheckout: true });
+    } else {
+      navigation.navigate("LogementDetails", { id: subject.id, resetFromCheckout: true });
     }
-    navigation.navigate("LogementDetails", {
-      id: targetId,
-      resetFromCheckout: true,
-    });
   };
 
-  // Confirmer
   const proceed = async () => {
     if (step < 3) {
       setStep((p) => NEXT[p]);
@@ -178,19 +259,15 @@ export default function CheckoutScreen({ route, navigation }: Props) {
     }
 
     try {
+      if (!subject) throw new Error("Aucune annonce sélectionnée.");
+      if (!startISO || !endISO) throw new Error("Dates invalides.");
+
       setPaying(true);
 
-      // Auth
       const { data: authData } = await supabase.auth.getSession();
       const userId = authData?.session?.user?.id;
       if (!userId) throw new Error("Veuillez vous connecter.");
 
-      // Sécurité
-      if (!draft && !res) throw new Error("Aucune donnée de réservation.");
-      const logementId = draft?.logementId ?? res?.logement_id;
-      if (!logementId) throw new Error("Logement introuvable.");
-
-      // add_ons sélectionnés + guest_info
       const addOnsPayload = (addOns || [])
         .filter((a: any) => selectedIds.includes(a.id))
         .map((a: any) => ({
@@ -218,35 +295,36 @@ export default function CheckoutScreen({ route, navigation }: Props) {
         },
       };
 
-      // Montants numériques sûrs
       const _commission = +serviceFeeTotal;
       const _priceEspece = Math.max(grandTotal - _commission, 0);
       const _totalPrice = +grandTotal;
 
-      // Insert réservation + code unique (retry 5 fois si collision)
-      const start = draft?.startDate ?? res?.start_date ?? "";
-      const end = draft?.endDate ?? res?.end_date ?? "";
-
+      // Insert réservation + code unique
       let insertedRes: { id: string; reservation_code: string } | null = null;
+
       for (let i = 0; i < 5; i++) {
         const code = genReservationCode();
+        const payload: any = {
+          user_id: userId,
+          start_date: startISO,
+          end_date: endISO,
+          unit_price: unit,
+          total_price: _totalPrice,
+          commission: _commission,
+          price_espece: _priceEspece,
+          currency: cur,
+          status: "pending",
+          guests_count: draft?.guests ?? 1,
+          reservation_code: code,
+          guest_info: guestInfo,
+        };
+
+        if (subject.kind === "vehicule") payload.vehicule_id = subject.id;
+        else payload.logement_id = subject.id;
+
         const { data: ins, error: insErr } = await supabase
           .from("reservations")
-          .insert({
-            user_id: userId,
-            logement_id: logementId,
-            start_date: start,
-            end_date: end,
-            unit_price: unit,
-            total_price: _totalPrice,
-            commission: _commission,
-            price_espece: _priceEspece,
-            currency: cur,
-            status: "confirmed",
-            guests_count: draft?.guests ?? 1,
-            reservation_code: code, // 👈 unique
-            guest_info: guestInfo,
-          })
+          .insert(payload)
           .select("id,reservation_code")
           .single();
 
@@ -254,35 +332,29 @@ export default function CheckoutScreen({ route, navigation }: Props) {
           insertedRes = ins;
           break;
         }
-        // 23505 = unique_violation (sur reservation_code)
-        if ((insErr as any)?.code === "23505") continue;
+        if ((insErr as any)?.code === "23505") continue; // collision code unique
         throw insErr;
       }
+
       if (!insertedRes) {
-        throw new Error(
-          "Impossible de générer un code de réservation unique. Réessayez."
-        );
+        throw new Error("Impossible de générer un code de réservation unique. Réessayez.");
       }
 
-      // Insert transaction (pending)
-      const txnAmount =
-        payChoice === "service_fee_only" ? serviceFeeTotal : _totalPrice;
-
+      const txnAmount = payChoice === "service_fee_only" ? serviceFeeTotal : _totalPrice;
       const { error: txnErr } = await supabase.from("transactions").insert({
         reservation_id: insertedRes.id,
         user_id: userId,
         amount: txnAmount,
         commission: _commission,
-        payment_method: payChoice, // "service_fee_only" | "all_online"
-        status: "pending", // 👈 demandé
+        payment_method: payChoice,
+        status: "paid",
       });
       if (txnErr) {
-        // rollback best-effort
         await supabase.from("reservations").delete().eq("id", insertedRes.id);
         throw txnErr;
       }
 
-      // Email (best-effort)
+      // Emails (best-effort)
       try {
         await supabase.functions.invoke("send-booking-emails", {
           body: { reservationId: insertedRes.id },
@@ -291,39 +363,32 @@ export default function CheckoutScreen({ route, navigation }: Props) {
         console.warn("[emails] échec d’envoi:", e);
       }
 
-      // Succès
       Alert.alert(
         "Réservation confirmée",
         (payChoice === "service_fee_only"
           ? `Merci ! Vous payez maintenant les frais de réservation de ${money(
               serviceFeeTotal,
               cur
-            )}.\nLe reste (${money(
-              totalDueHost,
-              cur
-            )}) sera réglé en espèces à l’hôte.`
+            )}.\nLe reste (${money(totalDueHost, cur)}) sera réglé en espèces à l’hôte.`
           : "Le paiement intégral sur l’app sera bientôt disponible.") +
           `\n\nCode de réservation : ${insertedRes.reservation_code}`,
         [
           {
             text: "Voir la réservation",
-            onPress: () =>
-              navigation.replace("ReservationDetails", { id: insertedRes!.id }),
+            onPress: () => navigation.replace("ReservationDetails", { id: insertedRes!.id }),
           },
         ]
       );
     } catch (e: any) {
-      console.error(e);
-      Alert.alert(
-        "Erreur",
-        e?.message ?? "Impossible d’enregistrer la réservation."
-      );
+      console.error("[Checkout] proceed error:", e?.message ?? e);
+      Alert.alert("Erreur", e?.message ?? "Impossible d’enregistrer la réservation.");
     } finally {
       setPaying(false);
     }
   };
 
-  if (loading || (!draft && !res)) {
+  /* ---------- Render ---------- */
+  if (loading || (!draft && !res) || !subject) {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color="#000" />
@@ -331,7 +396,16 @@ export default function CheckoutScreen({ route, navigation }: Props) {
     );
   }
 
-  const cover = logement?.listing_images?.[0]?.image_url || undefined;
+  const titleLine = subject.title || (subject.kind === "vehicule" ? "Véhicule" : "Logement");
+  const subLine =
+    subject.kind === "vehicule"
+      ? subject.subtitle ?? ""
+      : `${subject.subtitle ?? ""}${subject.reviews != null ? ` · ${subject.reviews} avis` : ""}`;
+
+  const leftLabel =
+    subject.kind === "vehicule"
+      ? `Véhicule (${nights} × ${money(unit, cur).replace(/\s/g, "\u00A0")})`
+      : `Logement (${nights} × ${money(unit, cur).replace(/\s/g, "\u00A0")})`;
 
   return (
     <View style={styles.root}>
@@ -342,37 +416,39 @@ export default function CheckoutScreen({ route, navigation }: Props) {
         </TouchableOpacity>
 
         <Text style={styles.headerTitle}>
-          {step === 1
-            ? "Vérifiez et continuez"
-            : step === 2
-            ? "Paiement"
-            : "Confirmation"}
+          {step === 1 ? "Vérifiez et continuez" : step === 2 ? "Paiement" : "Confirmation"}
         </Text>
         <View style={{ width: 36 }} />
       </SafeAreaView>
 
       {/* Body */}
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 140 }}>
-        {/* Récap logement */}
+        {/* Carte récap sujet */}
         <View style={styles.card}>
           <View style={styles.cardTop}>
             <Image
-              source={
-                cover ? { uri: cover } : require("../../assets/images/logement.jpg")
-              }
+              source={cover ? { uri: cover } : require("../../assets/images/logement.jpg")}
               style={styles.thumb}
             />
             <View style={{ flex: 1 }}>
               <Text style={styles.title} numberOfLines={2}>
-                {logement?.title ?? "Logement"}
+                {titleLine}
               </Text>
-              <View
-                style={{ flexDirection: "row", alignItems: "center", marginTop: 4 }}
-              >
-                <Ionicons name="star" size={14} color="#111" />
-                <Text style={styles.muted}>
-                  {logement?.rating ?? "4,58"} ({logement?.reviews_count ?? 122})
-                </Text>
+
+              <View style={{ flexDirection: "row", alignItems: "center", marginTop: 4 }}>
+                {subject.kind === "logement" ? (
+                  <>
+                    <Ionicons name="star" size={14} color="#111" />
+                    <Text style={styles.muted}>
+                      {subject.rating ?? "4,58"} ({subject.reviews ?? 122})
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Ionicons name="location-outline" size={14} color="#111" />
+                    <Text style={styles.muted}>{subject.subtitle ?? "—"}</Text>
+                  </>
+                )}
               </View>
             </View>
           </View>
@@ -384,25 +460,16 @@ export default function CheckoutScreen({ route, navigation }: Props) {
             <View style={{ flex: 1, paddingRight: 10 }}>
               <Text style={styles.label}>Dates</Text>
               <Text style={styles.value}>
-                {new Date(startISO).toLocaleDateString("fr-FR", {
-                  day: "2-digit",
-                  month: "short",
-                })}{" "}
+                {new Date(startISO).toLocaleDateString("fr-FR", { day: "2-digit", month: "short" })}{" "}
                 –{" "}
-                {new Date(endISO).toLocaleDateString("fr-FR", {
-                  day: "2-digit",
-                  month: "short",
-                })}
+                {new Date(endISO).toLocaleDateString("fr-FR", { day: "2-digit", month: "short" })}
               </Text>
               <Text style={[styles.muted, { marginTop: 4 }]}>
-                {nights} nuit{nights > 1 ? "s" : ""} réservée
-                {nights > 1 ? "s" : ""}
+                {nights} {subject.kind === "vehicule" ? "jour" : "nuit"}
+                {nights > 1 ? "s" : ""} réservé{nights > 1 ? "s" : ""}
               </Text>
             </View>
-            <TouchableOpacity
-              onPress={() => navigation.goBack()}
-              style={styles.smallBtn}
-            >
+            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.smallBtn}>
               <Text style={styles.smallBtnTxt}>Modifier</Text>
             </TouchableOpacity>
           </View>
@@ -417,9 +484,7 @@ export default function CheckoutScreen({ route, navigation }: Props) {
               </Text>
             </View>
             <TouchableOpacity
-              onPress={() =>
-                Alert.alert("À venir", "Sélection des voyageurs.")
-              }
+              onPress={() => Alert.alert("À venir", "Sélection des voyageurs.")}
               style={styles.smallBtn}
             >
               <Text style={styles.smallBtnTxt}>Modifier</Text>
@@ -432,9 +497,7 @@ export default function CheckoutScreen({ route, navigation }: Props) {
           <Text style={styles.blockTitle}>Détails du prix</Text>
 
           <View style={styles.line}>
-            <Text style={styles.lineLeft}>
-              Logement ({nights} × {money(unit, cur).replace(/\s/g, "\u00A0")})
-            </Text>
+            <Text style={styles.lineLeft}>{leftLabel}</Text>
             <Text style={styles.lineRight}>{money(base, cur)}</Text>
           </View>
 
@@ -448,8 +511,7 @@ export default function CheckoutScreen({ route, navigation }: Props) {
           <View style={styles.line}>
             <Text style={styles.lineLeft}>Frais de réservation</Text>
             <Text style={styles.lineRight}>
-              {money(SERVICE_FEE_PER_NIGHT, cur)} × {nights} ={" "}
-              {money(serviceFeeTotal, cur)}
+              {money(SERVICE_FEE_PER_NIGHT, cur)} × {nights} = {money(SERVICE_FEE_PER_NIGHT * nights, cur)}
             </Text>
           </View>
 
@@ -457,37 +519,24 @@ export default function CheckoutScreen({ route, navigation }: Props) {
 
           <View style={styles.line}>
             <Text style={[styles.lineLeft, { fontWeight: "900" }]}>
-              Total du séjour
+              Total {subject.kind === "vehicule" ? "de la location" : "du séjour"}
             </Text>
-            <Text style={[styles.lineRight, { fontWeight: "900" }]}>
-              {money(grandTotal, cur)}
-            </Text>
+            <Text style={[styles.lineRight, { fontWeight: "900" }]}>{money(grandTotal, cur)}</Text>
           </View>
 
           <View style={styles.line}>
-            <Text style={[styles.lineLeft, { fontWeight: "900" }]}>
-              À payer dès maintenant
-            </Text>
-            <Text style={[styles.lineRight, { fontWeight: "900" }]}>
-              {money(serviceFeeTotal, cur)}
-            </Text>
+            <Text style={[styles.lineLeft, { fontWeight: "900" }]}>À payer dès maintenant</Text>
+            <Text style={[styles.lineRight, { fontWeight: "900" }]}>{money(SERVICE_FEE_PER_NIGHT * nights, cur)}</Text>
           </View>
           <View style={styles.line}>
-            <Text style={[styles.lineLeft, { fontWeight: "900" }]}>
-              À payer en espèces
-            </Text>
-            <Text style={[styles.lineRight, { fontWeight: "900" }]}>
-              {money(espece, cur)}
-            </Text>
+            <Text style={[styles.lineLeft, { fontWeight: "900" }]}>À payer en espèces</Text>
+            <Text style={[styles.lineRight, { fontWeight: "900" }]}>{money(espece, cur)}</Text>
           </View>
 
           <Text style={[styles.muted, { marginTop: 8 }]}>
             {money(totalDueHost, cur)} seront réglés en espèces à l’hôte.{"\n"}
             {payChoice === "service_fee_only"
-              ? `${money(
-                  serviceFeeTotal,
-                  cur
-                )} de frais de réservation à payer maintenant sur l’app.`
+              ? `${money(SERVICE_FEE_PER_NIGHT * nights, cur)} de frais à payer maintenant sur l’app.`
               : "Le paiement intégral sur l’app sera bientôt disponible."}
           </Text>
         </View>
@@ -500,27 +549,17 @@ export default function CheckoutScreen({ route, navigation }: Props) {
             <TouchableOpacity
               activeOpacity={0.9}
               onPress={() => setPayChoice("service_fee_only")}
-              style={[
-                styles.payOption,
-                payChoice === "service_fee_only" && styles.payOptionSelected,
-              ]}
+              style={[styles.payOption, payChoice === "service_fee_only" && styles.payOptionSelected]}
             >
               <Ionicons
-                name={
-                  payChoice === "service_fee_only"
-                    ? "radio-button-on"
-                    : "radio-button-off"
-                }
+                name={payChoice === "service_fee_only" ? "radio-button-on" : "radio-button-off"}
                 size={18}
                 color={payChoice === "service_fee_only" ? "#111" : "#bbb"}
               />
               <View style={{ flex: 1 }}>
-                <Text style={styles.payLabel}>
-                  Payer uniquement les frais de réservation maintenant
-                </Text>
+                <Text style={styles.payLabel}>Payer uniquement les frais de réservation maintenant</Text>
                 <Text style={styles.paySub}>
-                  {money(serviceFeeTotal, cur)} sur l’app ·{" "}
-                  {money(totalDueHost, cur)} en espèces
+                  {money(SERVICE_FEE_PER_NIGHT * nights, cur)} sur l’app · {money(totalDueHost, cur)} en espèces
                 </Text>
               </View>
             </TouchableOpacity>
@@ -529,9 +568,7 @@ export default function CheckoutScreen({ route, navigation }: Props) {
               <Ionicons name="radio-button-off" size={18} color="#bbb" />
               <View style={{ flex: 1 }}>
                 <Text style={styles.payLabel}>Tout payer sur l’app</Text>
-                <Text style={[styles.paySub, { color: "#999" }]}>
-                  Bientôt disponible
-                </Text>
+                <Text style={[styles.paySub, { color: "#999" }]}>Bientôt disponible</Text>
               </View>
             </View>
           </View>
@@ -541,9 +578,7 @@ export default function CheckoutScreen({ route, navigation }: Props) {
         {step >= 3 && (
           <View style={styles.card}>
             <Text style={styles.blockTitle}>Dernière étape</Text>
-            <Text style={styles.muted}>
-              Vérifiez vos informations puis confirmez la réservation.
-            </Text>
+            <Text style={styles.muted}>Vérifiez vos informations puis confirmez la réservation.</Text>
           </View>
         )}
       </ScrollView>
@@ -556,19 +591,14 @@ export default function CheckoutScreen({ route, navigation }: Props) {
           onPress={proceed}
           activeOpacity={0.9}
         >
-          {paying ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.ctaTxt}>
-              {step < 3 ? "Suivant" : "Confirmer"}
-            </Text>
-          )}
+          {paying ? <ActivityIndicator color="#fff" /> : <Text style={styles.ctaTxt}>{step < 3 ? "Suivant" : "Confirmer"}</Text>}
         </TouchableOpacity>
       </SafeAreaView>
     </View>
   );
 }
 
+/* ---------- Styles ---------- */
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#fff" },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },

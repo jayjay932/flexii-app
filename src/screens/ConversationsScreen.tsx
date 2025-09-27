@@ -192,24 +192,8 @@ export default function ConversationsScreen({ navigation }: Props) {
           <View style={styles.ownerActions}>
             <Text style={styles.ownerInfo}>Dernière offre: {euro(it.lastMsgPrice!)} • {it.other?.full_name ?? "Client"}</Text>
             <View style={{ flexDirection: "row", gap: 10 }}>
-              <TouchableOpacity
-                style={[styles.actionBtn, styles.actionPrimary]}
-                onPress={async () => {
-                  try { await acceptOffer(it.id, "last-offer", it.lastMsgPrice!); }
-                  catch (e: any) { Alert.alert("Erreur", e?.message ?? "Action impossible."); }
-                }}
-              >
              
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionBtn, styles.actionGhost]}
-                onPress={async () => {
-                  try { await rejectOffer(it.id, "last-offer", it.lastMsgPrice!); }
-                  catch (e: any) { Alert.alert("Erreur", e?.message ?? "Action impossible."); }
-                }}
-              >
-
-              </TouchableOpacity>
+              
             </View>
           </View>
         )}

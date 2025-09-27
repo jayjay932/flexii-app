@@ -20,6 +20,32 @@ import type { RootStackParamList } from "@/src/navigation/RootNavigator";
 
 type Props = NativeStackScreenProps<RootStackParamList, "ReservationDetails">;
 
+type HostUser = {
+  full_name: string | null;
+  email: string | null;
+  phone: string | null;
+  avatar_url?: string | null;
+} | null;
+
+type AnyListingCommon = {
+  city?: string | null;
+  quartier?: string | null;
+  address?: string | null; // logement
+  listing_images?: { image_url: string | null }[] | null;
+  users?: HostUser; // owner
+};
+
+type LogementListing = AnyListingCommon & {
+  title: string;
+  check_in_start?: string | null;
+  check_out?: string | null;
+};
+
+type VehiculeListing = AnyListingCommon & {
+  marque?: string | null;
+  modele?: string | null;
+};
+
 type Row = {
   id: string;
   start_date: string;
@@ -31,23 +57,12 @@ type Row = {
   check_in_time: string | null;
   check_out_time: string | null;
   logement_id: string | null;
+  vehicule_id: string | null;
   reservation_code: string | null;
   arrival_confirmation: boolean | null;
-  listings_logements?: {
-    title: string;
-    city: string;
-    address?: string | null;
-    quartier?: string | null;
-    check_in_start?: string | null;
-    check_out?: string | null;
-    listing_images?: { image_url: string | null }[];
-    users?: {
-      full_name: string | null;
-      email: string | null;
-      phone: string | null;
-      avatar_url?: string | null;
-    } | null;
-  } | null;
+
+  listings_logements?: LogementListing | null;
+  listings_vehicules?: VehiculeListing | null;
 };
 
 type Txn = {
@@ -105,13 +120,15 @@ export default function ReservationDetailsScreen({ route, navigation }: Props) {
     try {
       setLoading(true);
 
+      // ⬇️ On charge logement ET véhicule + photos + host
       const [resq, txnq] = await Promise.all([
         supabase
           .from("reservations")
           .select(`
             id, start_date, end_date, created_at, status, total_price, currency,
-            check_in_time, check_out_time, logement_id,
+            check_in_time, check_out_time, logement_id, vehicule_id,
             reservation_code, arrival_confirmation,
+
             listings_logements:logement_id(
               title,
               city,
@@ -119,6 +136,20 @@ export default function ReservationDetailsScreen({ route, navigation }: Props) {
               address:adresse,
               check_in_start,
               check_out,
+              listing_images(image_url),
+              users:owner_id(
+                full_name,
+                email,
+                phone,
+                avatar_url
+              )
+            ),
+
+            listings_vehicules:vehicule_id(
+              marque,
+              modele,
+              city,
+              quartier,
               listing_images(image_url),
               users:owner_id(
                 full_name,
@@ -142,9 +173,7 @@ export default function ReservationDetailsScreen({ route, navigation }: Props) {
       if (resq.error) throw resq.error;
       setRow(resq.data ?? null);
 
-      // peut être null si aucune transaction n'existe encore
       if (txnq.error && (txnq as any).error?.code !== "PGRST116") {
-        // PGRST116 = no rows found (selon versions) → on ignore
         throw txnq.error;
       }
       setTxn(txnq.data ?? null);
@@ -162,23 +191,44 @@ export default function ReservationDetailsScreen({ route, navigation }: Props) {
     return unsub;
   }, [id]);
 
-  const cur = row?.currency ?? "XOF";
-  const city = row?.listings_logements?.city ?? "—";
-  const title = row?.listings_logements?.title ?? "Logement";
-  const cover =
-    row?.listings_logements?.listing_images?.[0]?.image_url || undefined;
-  const host = row?.listings_logements?.users;
-  const address =
-    row?.listings_logements?.address ??
-    row?.listings_logements?.quartier ??
-    city;
+  const kind: "logement" | "vehicule" =
+    row?.logement_id ? "logement" : "vehicule";
 
+  // —— Dérivés d’affichage unifiés (titre, ville, photo, hôte, adresse) ——
+  const cur = row?.currency ?? "XOF";
+
+  const Lh = row?.listings_logements;
+  const Vh = row?.listings_vehicules;
+
+  const title =
+    kind === "vehicule"
+      ? `${Vh?.marque ?? ""} ${Vh?.modele ?? ""}`.trim() || "Véhicule"
+      : Lh?.title ?? "Logement";
+
+  const city = (kind === "vehicule" ? Vh?.city : Lh?.city) ?? "—";
+
+  const cover =
+    (kind === "vehicule"
+      ? Vh?.listing_images?.[0]?.image_url
+      : Lh?.listing_images?.[0]?.image_url) || undefined;
+
+  const host: HostUser =
+    kind === "vehicule" ? Vh?.users ?? null : Lh?.users ?? null;
+
+  const address =
+    (kind === "vehicule"
+      ? Vh?.quartier ?? Vh?.city
+      : Lh?.address ?? Lh?.quartier ?? Lh?.city) ?? city;
+
+  // heures (logement; pour véhicule, fallback)
   const ci =
     row?.check_in_time ??
-    row?.listings_logements?.check_in_start ??
+    (Lh?.check_in_start ?? null) ??
     "15:00:00";
   const co =
-    row?.check_out_time ?? row?.listings_logements?.check_out ?? "11:00:00";
+    row?.check_out_time ??
+    (Lh?.check_out ?? null) ??
+    "11:00:00";
 
   // deadline annulation : 24h après created_at
   const cancelDeadline = row
@@ -187,7 +237,6 @@ export default function ReservationDetailsScreen({ route, navigation }: Props) {
   const { h, m, s, done } = useCountdown(cancelDeadline);
 
   const arrivalConfirmed = !!row?.arrival_confirmation;
-
   const canConfirmArrival =
     !!row && row.status === "confirmed" && !arrivalConfirmed;
 
@@ -265,7 +314,7 @@ export default function ReservationDetailsScreen({ route, navigation }: Props) {
     Linking.openURL(url);
   };
 
-  // timeline : une entrée par jour entre start et end
+  // ——— Timeline (❗️1er jour: message Flexii, pas « Arrivée après … ») ———
   const days = useMemo(() => {
     if (!row) return [];
     const s = new Date(row.start_date);
@@ -278,28 +327,31 @@ export default function ReservationDetailsScreen({ route, navigation }: Props) {
       if (i === 0) {
         list.push({
           key,
-          label: `Arrivée après ${ci.slice(0, 5)}`,
+          label: "FlexiIi vous souhaite un bon voyage",
           note: address,
           img: cover,
         });
       } else if (d.getTime() === e.getTime()) {
         list.push({
           key,
-          label: `Départ avant ${co.slice(0, 5)}`,
-          note: "Merci de votre séjour ✨",
+          label: `Départ avant ${co?.slice(0, 5) || "11:00"}`,
+          note: kind === "vehicule" ? "Merci pour votre location ✨" : "Merci de votre séjour ✨",
           img: cover,
         });
       } else {
         list.push({
           key,
-          label: "Profitez de votre séjour",
-          note: "Activités, visites, repos…",
+          label:
+            kind === "vehicule"
+              ? "Profitez de votre véhicule"
+              : "Profitez de votre séjour",
+          note: kind === "vehicule" ? "Conduite prudente, bonne route !" : "Activités, visites, repos…",
         });
       }
       i++;
     }
     return list;
-  }, [row?.start_date, row?.end_date, address, ci, co, cover]);
+  }, [row?.start_date, row?.end_date, kind, address, cover, co]);
 
   if (loading || !row) {
     return (
@@ -309,8 +361,8 @@ export default function ReservationDetailsScreen({ route, navigation }: Props) {
     );
   }
 
-  // 👇 NOUVELLE RÈGLE: infos hôte visibles SEULEMENT si (réservation confirmée/terminée) ET (transaction payée)
-  const txnPaid = (txn?.status === "paid");
+  // 👇 Infos hôte visibles SEULEMENT si (réservation confirmée/terminée) ET (transaction payée)
+  const txnPaid = txn?.status === "paid";
   const hostExposed =
     (row.status === "confirmed" || row.status === "completed") && txnPaid;
 
@@ -338,7 +390,7 @@ export default function ReservationDetailsScreen({ route, navigation }: Props) {
           contentContainerStyle={{ paddingBottom: 40 }}
           showsVerticalScrollIndicator={false}
         >
-          {/* Top card (titre + dates + adresse + bouton itinéraire) */}
+          {/* Top card */}
           <View style={styles.topCard}>
             <Text style={styles.title}>{title}</Text>
             <Text style={styles.sub}>
@@ -377,9 +429,7 @@ export default function ReservationDetailsScreen({ route, navigation }: Props) {
             <View style={styles.timelineLine} />
             {days.map((d, idx) => {
               const dateObj = addDays(row.start_date, idx);
-              const dow = dateObj.toLocaleDateString("en-US", {
-                weekday: "short",
-              });
+              const dow = dateObj.toLocaleDateString("en-US", { weekday: "short" });
               const dd = dateObj.getDate();
               return (
                 <View key={d.key} style={styles.timeRow}>
@@ -526,7 +576,6 @@ export default function ReservationDetailsScreen({ route, navigation }: Props) {
                 ? "Annulée"
                 : "Terminée"}
             </Text>
-            {/* Petit rappel paiement (optionnel mais utile) */}
             <Text style={[styles.statusLine, { marginTop: 4 }]}>
               Paiement : {txnPaid ? "Payé" : txn?.status === "pending" ? "En cours" : txn?.status ? txn.status : "—"}
             </Text>
@@ -723,7 +772,6 @@ const styles = StyleSheet.create({
   },
   secondaryTxt: { fontWeight: "900", color: "#111" },
   secondaryBtnDisabled: { backgroundColor: "#eee" },
-  secondaryTxtDisabled: { color: "#999" },
 
   countdownPill: {
     flexDirection: "row",

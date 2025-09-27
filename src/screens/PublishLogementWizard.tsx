@@ -1,13 +1,4 @@
-// src/screens/PublishLogementScreen.tsx
-import React, {
-  memo,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  startTransition,
-} from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -22,7 +13,7 @@ import {
   Keyboard,
   TouchableWithoutFeedback,
   InputAccessoryView,
-  Image as RNImage,
+  Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -46,7 +37,7 @@ type IoniconName = React.ComponentProps<typeof Ionicons>["name"];
 /* Constantes                                            */
 /* ---------------------------------------------------- */
 const IA_ID = "publish-toolbar";
-const BUCKET = "listing-images";
+const BUCKET = "listing-images";              // ✅ même que EditListingScreen
 const MIN_PICS = 4;
 
 const HOUSE_TYPES = [
@@ -106,36 +97,18 @@ async function pickSingleImage(): Promise<Picked | null> {
   return { uri: a.uri, base64: a.base64 || undefined };
 }
 
-/* ==== FastImage (fallback Image) ==== */
-let FastImage: any = RNImage;
-try {
-  if (Platform.OS !== "web") {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    FastImage = require("react-native-fast-image").default;
-  }
-} catch {
-  FastImage = RNImage;
-}
-
 /* ---------------------------------------------------- */
 /* Petits composants UI                                  */
 /* ---------------------------------------------------- */
-const Card = memo(function Card({ children }: { children: React.ReactNode }) {
+function Card({ children }: { children: React.ReactNode }) {
   return <View style={styles.card}>{children}</View>;
-});
-const Label = memo(function Label({ children, small }: { children: React.ReactNode; small?: boolean }) {
+}
+function Label({ children, small }: { children: React.ReactNode; small?: boolean }) {
   return <Text style={[styles.label, small && { fontSize: 12 }]}>{children}</Text>;
-});
-
-const Seg = memo(function Seg({
-  values,
-  value,
-  onChange,
-}: {
-  values: string[];
-  value: string;
-  onChange: (v: string) => void;
-}) {
+}
+function Seg({
+  values, value, onChange,
+}: { values: string[]; value: string; onChange: (v: string) => void }) {
   return (
     <View style={styles.segment}>
       {values.map((v) => {
@@ -153,9 +126,9 @@ const Seg = memo(function Seg({
       })}
     </View>
   );
-});
+}
 
-const Input = memo(function Input(props: React.ComponentProps<typeof TextInput>) {
+function Input(props: React.ComponentProps<typeof TextInput>) {
   return (
     <TextInput
       {...props}
@@ -167,23 +140,13 @@ const Input = memo(function Input(props: React.ComponentProps<typeof TextInput>)
       placeholderTextColor="#A1A1A1"
     />
   );
-});
+}
 
-const Stepper = memo(function Stepper({
-  label,
-  value,
-  setValue,
-  min = 0,
-  max = 99,
-}: {
-  label: string;
-  value: number;
-  setValue: (n: number) => void;
-  min?: number;
-  max?: number;
-}) {
-  const dec = useCallback(() => setValue(Math.max(min, value - 1)), [min, value, setValue]);
-  const inc = useCallback(() => setValue(Math.min(max, value + 1)), [max, value, setValue]);
+function Stepper({
+  label, value, setValue, min = 0, max = 99,
+}: { label: string; value: number; setValue: (n: number) => void; min?: number; max?: number }) {
+  const dec = () => setValue(Math.max(min, value - 1));
+  const inc = () => setValue(Math.min(max, value + 1));
   return (
     <View style={styles.stepperRow}>
       <Text style={styles.stepperLabel}>{label}</Text>
@@ -198,7 +161,7 @@ const Stepper = memo(function Stepper({
       </View>
     </View>
   );
-});
+}
 
 const iconForEquip = (name: string): IoniconName => {
   const n = name.toLowerCase();
@@ -213,44 +176,16 @@ const iconForEquip = (name: string): IoniconName => {
   return "ellipse-outline";
 };
 
-/* Image tile mémoïsée */
-const PhotoTile = memo(function PhotoTile({
-  uri,
-  onRemove,
-}: {
-  uri: string;
-  onRemove: (u: string) => void;
-}) {
-  return (
-    <View style={styles.imgTile}>
-      <FastImage
-        source={{ uri, priority: FastImage.priority?.high }}
-        style={styles.img}
-        resizeMode={FastImage.resizeMode?.cover ?? "cover"}
-      />
-      <TouchableOpacity style={styles.imgTrash} onPress={() => onRemove(uri)} activeOpacity={0.85}>
-        <Ionicons name="trash" size={16} color="#fff" />
-      </TouchableOpacity>
-    </View>
-  );
-});
-
 /* ---------------------------------------------------- */
 /* Equipements                                           */
 /* ---------------------------------------------------- */
-const EquipementsPicker = memo(function EquipementsPicker({
-  selectedIds,
-  onToggle,
-}: {
-  selectedIds: string[];
-  onToggle: (id: string) => void;
-}) {
+function EquipementsPicker({
+  selectedIds, onToggle,
+}: { selectedIds: string[]; onToggle: (id: string) => void }) {
   const [loading, setLoading] = useState(true);
   const [equipements, setEquipements] = useState<Equip[]>([]);
-  const mounted = useRef(true);
 
   useEffect(() => {
-    mounted.current = true;
     (async () => {
       try {
         setLoading(true);
@@ -259,16 +194,13 @@ const EquipementsPicker = memo(function EquipementsPicker({
           .select("id, name, category")
           .eq("category", "logement");
         if (error) throw error;
-        if (mounted.current) setEquipements((data || []) as any);
+        setEquipements((data || []) as any);
       } catch (e) {
         console.error(e);
       } finally {
-        if (mounted.current) setLoading(false);
+        setLoading(false);
       }
     })();
-    return () => {
-      mounted.current = false;
-    };
   }, []);
 
   if (loading) {
@@ -297,10 +229,12 @@ const EquipementsPicker = memo(function EquipementsPicker({
           </TouchableOpacity>
         );
       })}
-      {equipements.length === 0 && <Text style={styles.hint}>Aucun équipement disponible.</Text>}
+      {equipements.length === 0 && (
+        <Text style={styles.hint}>Aucun équipement disponible.</Text>
+      )}
     </View>
   );
-});
+}
 
 /* ---------------------------------------------------- */
 /* Écran principal                                       */
@@ -332,59 +266,48 @@ export default function PublishLogementScreen({ navigation }: Props) {
 
   const [publishing, setPublishing] = useState(false);
 
-  // Invalidités (live)
-  const invalidTitle = useMemo(() => title.trim().length < TITLE_MIN, [title]);
-  const invalidDesc = useMemo(() => description.trim().length < DESC_MIN, [description]);
-  const invalidCity = useMemo(() => city.trim().length === 0, [city]);
-  const invalidPrice = useMemo(() => isNaN(Number(price)) || Number(price) <= 0, [price]);
-  const invalidImages = useMemo(() => images.length < MIN_PICS, [images]);
+  // 🔎 Invalidités (live)
+  const invalidTitle = title.trim().length < TITLE_MIN;
+  const invalidDesc = description.trim().length < DESC_MIN;
+  const invalidCity = city.trim().length === 0;
+  const invalidPrice = isNaN(Number(price)) || Number(price) <= 0;
+  const invalidImages = images.length < MIN_PICS;
 
-  const canPublish = useMemo(
-    () => !invalidTitle && !invalidDesc && !invalidCity && !!rentalType && !invalidPrice && !invalidImages,
-    [invalidTitle, invalidDesc, invalidCity, rentalType, invalidPrice, invalidImages]
-  );
+  // Reste de ta logique de validation globale (gardée)
+  const canPublish = useMemo(() => {
+    return (
+      !invalidTitle &&
+      !invalidDesc &&
+      !invalidCity &&
+      !!rentalType &&
+      !invalidPrice &&
+      !invalidImages
+    );
+  }, [invalidTitle, invalidDesc, invalidCity, rentalType, invalidPrice, invalidImages]);
 
-  const addPhoto = useCallback(async () => {
+  const addPhoto = async () => {
     const picked = await pickSingleImage();
     if (!picked) return;
-    // push en tête (la dernière photo devient 1ère) — même logique
-    startTransition(() => {
-      setImages((prev) => [{ uri: picked.uri, base64: picked.base64 }, ...prev]);
-    });
-  }, []);
+    setImages((prev) => [{ uri: picked.uri, base64: picked.base64 }, ...prev]);
+  };
 
-  const removePhoto = useCallback((uri: string) => {
+  const removePhoto = (uri: string) => {
     setImages((prev) => prev.filter((p) => p.uri !== uri));
-  }, []);
+  };
 
-  const toggleEquip = useCallback(
-    (id: string) =>
-      setSelectedEquipIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])),
-    []
-  );
+  const toggleEquip = (id: string) =>
+    setSelectedEquipIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
   /* ---------------- Publication ---------------- */
-  const publish = useCallback(async () => {
+  const publish = async () => {
     try {
       if (publishing) return;
 
-      // validation identique (on bloque si invalide)
+      // Si invalide : alerte récap et stop (le bouton n'est plus grisé, mais on bloque l'envoi)
       if (!canPublish) {
         const errs: string[] = [];
-        if (invalidTitle)
-          errs.push(
-            `Titre : ${TITLE_MIN} caractères minimum demandés (il manque ${Math.max(
-              0,
-              TITLE_MIN - title.trim().length
-            )})`
-          );
-        if (invalidDesc)
-          errs.push(
-            `Description : ${DESC_MIN} caractères minimum demandés (il manque ${Math.max(
-              0,
-              DESC_MIN - description.trim().length
-            )})`
-          );
+        if (invalidTitle) errs.push(`Titre : ${TITLE_MIN} caractères minimum demandés (il manque ${Math.max(0, TITLE_MIN - title.trim().length)})`);
+        if (invalidDesc) errs.push(`Description : ${DESC_MIN} caractères minimum demandés (il manque ${Math.max(0, DESC_MIN - description.trim().length)})`);
         if (invalidCity) errs.push("Ville : champ requis");
         if (invalidPrice) errs.push("Prix : un nombre positif est requis");
         if (invalidImages) errs.push(`Photos : ${MIN_PICS} minimum (il manque ${Math.max(0, MIN_PICS - images.length)})`);
@@ -428,7 +351,9 @@ export default function PublishLogementScreen({ navigation }: Props) {
       // 2) upload photos — ordre respecté (0,1,2,…) + filenames indexés
       for (let i = 0; i < images.length; i++) {
         const img = images[i];
-        const base64 = img.base64 ?? (await FileSystem.readAsStringAsync(img.uri, { encoding: "base64" }));
+        const base64 =
+          img.base64 ?? (await FileSystem.readAsStringAsync(img.uri, { encoding: "base64" }));
+
         const bytes = base64ToUint8Array(base64);
         const { ext, contentType } = guessContentType(img.uri);
         const filename = `${String(i).padStart(3, "0")}_${Date.now()}.${ext}`;
@@ -464,30 +389,7 @@ export default function PublishLogementScreen({ navigation }: Props) {
     } finally {
       setPublishing(false);
     }
-  }, [
-    publishing,
-    canPublish,
-    invalidTitle,
-    invalidDesc,
-    invalidCity,
-    invalidPrice,
-    invalidImages,
-    title,
-    description,
-    lgType,
-    rentalType,
-    price,
-    city,
-    quartier,
-    adresse,
-    bedrooms,
-    showers,
-    toilets,
-    maxGuests,
-    images,
-    selectedEquipIds,
-    navigation,
-  ]);
+  };
 
   const headerTitle = useMemo(() => "Publier un logement", []);
 
@@ -497,7 +399,7 @@ export default function PublishLogementScreen({ navigation }: Props) {
         <InputAccessoryView nativeID={IA_ID}>
           <View style={styles.kbToolbar}>
             <View />
-            <TouchableOpacity onPress={Keyboard.dismiss} style={styles.kbDone} activeOpacity={0.9}>
+            <TouchableOpacity onPress={Keyboard.dismiss} style={styles.kbDone}>
               <Text style={styles.kbDoneTxt}>Terminer</Text>
             </TouchableOpacity>
           </View>
@@ -507,7 +409,7 @@ export default function PublishLogementScreen({ navigation }: Props) {
       <SafeAreaView edges={["top"]} style={styles.safe}>
         {/* Header */}
         <View style={styles.headerRow}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.xBtn} activeOpacity={0.9}>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.xBtn}>
             <Ionicons name="chevron-back" size={22} color="#111" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>{headerTitle}</Text>
@@ -546,10 +448,11 @@ export default function PublishLogementScreen({ navigation }: Props) {
               <Card>
                 <View style={styles.imagesHeader}>
                   <Label>Photos</Label>
-
+                  
                   <TouchableOpacity onPress={addPhoto} style={styles.addPhotoBtn} activeOpacity={0.9}>
                     <Text style={styles.addPhotoTxt}>Ajouter une photo</Text>
                   </TouchableOpacity>
+                  
                 </View>
                 <Text> ATTENTION LA DERNIERE PHOTO SERA LA 1ERE     </Text>
 
@@ -559,7 +462,16 @@ export default function PublishLogementScreen({ navigation }: Props) {
                   </TouchableOpacity>
 
                   {images.map((img) => (
-                    <PhotoTile key={img.uri} uri={img.uri} onRemove={removePhoto} />
+                    <View key={img.uri} style={styles.imgTile}>
+                      <Image source={{ uri: img.uri }} style={styles.img} />
+                      <TouchableOpacity
+                        style={styles.imgTrash}
+                        onPress={() => removePhoto(img.uri)}
+                        activeOpacity={0.85}
+                      >
+                        <Ionicons name="trash" size={16} color="#fff" />
+                      </TouchableOpacity>
+                    </View>
                   ))}
                 </View>
 
@@ -603,11 +515,7 @@ export default function PublishLogementScreen({ navigation }: Props) {
               {/* Détails & prix */}
               <Card>
                 <Label>Tarification</Label>
-                <Seg
-                  values={RENTAL_TYPES as unknown as string[]}
-                  value={rentalType}
-                  onChange={(v) => setRentalType(v as any)}
-                />
+                <Seg values={RENTAL_TYPES as unknown as string[]} value={rentalType} onChange={(v) => setRentalType(v as any)} />
                 <View style={{ height: 8 }} />
                 <Input
                   value={price}
@@ -616,9 +524,7 @@ export default function PublishLogementScreen({ navigation }: Props) {
                   keyboardType="decimal-pad"
                   style={[invalidPrice && styles.inputError]}
                 />
-                {invalidPrice && (
-                  <Text style={[styles.hint, styles.hintError]}>Entrez un nombre strictement positif</Text>
-                )}
+                {invalidPrice && <Text style={[styles.hint, styles.hintError]}>Entrez un nombre strictement positif</Text>}
               </Card>
 
               <Card>
@@ -659,7 +565,7 @@ export default function PublishLogementScreen({ navigation }: Props) {
       <SafeAreaView edges={["bottom"]} style={styles.footer}>
         <TouchableOpacity
           style={[styles.saveBtn, publishing && { opacity: 0.6 }]}
-          disabled={publishing}
+          disabled={publishing}               // 👈 bouton toujours actif (sauf pendant la requête)
           onPress={publish}
           activeOpacity={0.9}
         >
@@ -695,11 +601,8 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   xBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: "center", justifyContent: "center",
     backgroundColor: "#f2f2f2",
   },
   headerTitle: { fontSize: 20, fontWeight: "900", color: "#111" },
@@ -752,12 +655,8 @@ const styles = StyleSheet.create({
   stepperLabel: { fontWeight: "800", color: "#111" },
   stepperCtrls: { flexDirection: "row", alignItems: "center", gap: 10 },
   stepperBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: "#f3f3f3",
-    alignItems: "center",
-    justifyContent: "center",
+    width: 34, height: 34, borderRadius: 17,
+    backgroundColor: "#f3f3f3", alignItems: "center", justifyContent: "center",
   },
   stepperValue: { width: 28, textAlign: "center", fontWeight: "900", color: "#111" },
 
@@ -766,43 +665,32 @@ const styles = StyleSheet.create({
   addPhotoBtn: { backgroundColor: "#111", paddingHorizontal: 12, paddingVertical: 10, borderRadius: 999 },
   addPhotoTxt: { color: "#fff", fontWeight: "900" },
   imagesGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  imagesGridError: { borderWidth: 1, borderColor: "#E61E4D", borderRadius: 12, padding: 6 },
-  plusTile: {
-    width: 92,
-    height: 92,
-    borderRadius: 12,
+  imagesGridError: {
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.1)",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#f7f7f7",
+    borderColor: "#E61E4D",
+    borderRadius: 12,
+    padding: 6,
+  },
+  plusTile: {
+    width: 92, height: 92, borderRadius: 12, borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.1)", alignItems: "center", justifyContent: "center", backgroundColor: "#f7f7f7",
   },
   imgTile: { width: 92, height: 92, borderRadius: 12, overflow: "hidden", backgroundColor: "#eee" },
   img: { width: "100%", height: "100%" },
   imgTrash: {
-    position: "absolute",
-    right: 6,
-    top: 6,
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: "rgba(0,0,0,0.7)",
-    alignItems: "center",
-    justifyContent: "center",
+    position: "absolute", right: 6, top: 6, width: 24, height: 24, borderRadius: 12,
+    backgroundColor: "rgba(0,0,0,0.7)", alignItems: "center", justifyContent: "center",
   },
 
   // Equipements
   equipWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   equipChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: 999,
-    backgroundColor: "#f4f4f4",
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingHorizontal: 12, paddingVertical: 9, borderRadius: 999, backgroundColor: "#f4f4f4",
   },
-  equipChipActive: { backgroundColor: "#111", borderWidth: 1, borderColor: "#111" },
+  equipChipActive: {
+    backgroundColor: "#111", borderWidth: 1, borderColor: "#111",
+  },
   equipTxt: { fontWeight: "800", color: "#666", maxWidth: 160 },
   equipTxtActive: { color: "#fff" },
   hint: { marginTop: 6, color: "#888", fontSize: 12, fontWeight: "600" },
@@ -810,7 +698,7 @@ const styles = StyleSheet.create({
 
   // Keyboard accessory
   kbToolbar: {
-    backgroundColor: "f6f6f6",
+    backgroundColor: "#f6f6f6",
     borderTopWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(0,0,0,0.12)",
     paddingHorizontal: 12,
@@ -824,43 +712,21 @@ const styles = StyleSheet.create({
 
   // Footer
   footer: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "rgba(255,255,255,0.98)",
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 16,
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowOffset: { width: 0, height: -4 },
-    shadowRadius: 10,
-    elevation: 8,
+    position: "absolute", left: 0, right: 0, bottom: 0, backgroundColor: "rgba(255,255,255,0.98)",
+    paddingHorizontal: 16, paddingTop: 12, paddingBottom: 16,
+    borderTopLeftRadius: 18, borderTopRightRadius: 18,
+    shadowColor: "#000", shadowOpacity: 0.08, shadowOffset: { width: 0, height: -4 }, shadowRadius: 10, elevation: 8,
   },
   saveBtn: {
-    backgroundColor: "#111",
-    height: 56,
-    borderRadius: 28,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
+    backgroundColor: "#111", height: 56, borderRadius: 28, alignItems: "center", justifyContent: "center",
+    flexDirection: "row", gap: 8,
   },
   saveTxt: { color: "#fff", fontWeight: "900", fontSize: 16 },
 
   grid2: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   tile: {
-    width: "48%",
-    padding: 14,
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.06)",
-    alignItems: "center",
-    gap: 8,
+    width: "48%", padding: 14, backgroundColor: "#fff", borderRadius: 14,
+    borderWidth: 1, borderColor: "rgba(0,0,0,0.06)", alignItems: "center", gap: 8,
   },
   tileOn: { borderColor: "#111", backgroundColor: "#f9f9f9" },
   tileLabel: { fontWeight: "800", color: "#444" },

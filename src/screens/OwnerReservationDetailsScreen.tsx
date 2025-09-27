@@ -20,7 +20,7 @@ type Row = {
   confirmed_at?: string | null;
   start_date: string;
   end_date: string;
-  status: string; // on normalise en runtime
+  status: string; // normalisé en runtime
   total_price: number;
   currency: string | null;
 
@@ -30,7 +30,7 @@ type Row = {
 
   reservation_code: string | null;
   espece_confirmation: boolean | null;
-  price_espece: number | string | null; // <- peut arriver en string
+  price_espece: number | string | null;
 
   user_id: string | null;
   users?: { full_name: string | null; email: string | null; phone: string | null; avatar_url?: string | null } | null;
@@ -160,7 +160,7 @@ export default function OwnerReservationDetailsScreen({ route, navigation }: Pro
   // Coordonnées visibles si confirmé + txn paid (règle business)
   const showClientInfo = !!row && isConfirmed && txnPaid;
 
-  // Fenêtre d’annulation : 24h après confirmation (fallback created_at)
+  // Fenêtre d’annulation (historique) : 24h après confirmation (fallback created_at)
   const baseISO = row?.confirmed_at ?? row?.created_at;
   const cancelDeadlineISO = baseISO
     ? new Date(new Date(baseISO).getTime() + 24 * 3600 * 1000).toISOString()
@@ -169,14 +169,12 @@ export default function OwnerReservationDetailsScreen({ route, navigation }: Pro
 
   // 🔑 Boutons
   const canConfirmReservation = statusNorm === "pending";
-  // 👉 EXIGENCES : confirmé + price_espece > 0 + pas déjà confirmé — INDÉPENDANT de txnPaid
- // Avant
-// const canConfirmCash = isConfirmed && cashDue && !row?.espece_confirmation;
 
-// Après
-const canConfirmCash = isConfirmed && !row?.espece_confirmation;
-  // Annuler interdit si txn paid OU espèces confirmées OU délai fini
-  const canCancel = isConfirmed && !done && !txnPaid && !row?.espece_confirmation;
+  // 👉 confirmé + pas déjà confirmé en espèces (indépendant de txnPaid)
+  const canConfirmCash = isConfirmed && !row?.espece_confirmation;
+
+  // ✅ Annulation toujours possible (exigence)
+  const canCancel = true;
 
   const onConfirmReservation = async () => {
     if (!row) return;
@@ -231,7 +229,7 @@ const canConfirmCash = isConfirmed && !row?.espece_confirmation;
   };
 
   const onCancel = async () => {
-    if (!row || !canCancel) return;
+    if (!row) return; // bouton toujours actif → on ne bloque plus ici
     Alert.alert("Annuler la réservation ?", "Cette action est définitive.", [
       { text: "Non", style: "cancel" },
       {
@@ -274,14 +272,15 @@ const canConfirmCash = isConfirmed && !row?.espece_confirmation;
 
   const code = row.reservation_code || row.id.slice(0, 8).toUpperCase();
 
-  // Affichage paiement
+  // Affichage paiement (sans mention "annulation indisponible")
   const paymentLabel = txnPaid
     ? (cashDue && !row.espece_confirmation ? "Payé (in-app) · espèces à confirmer" : "Payé")
     : row.espece_confirmation
     ? "Espèces confirmées"
     : (txn?.status ?? "—");
 
-  const showCountdown = canCancel;
+  // Le chrono reste informatif uniquement
+  const showCountdown = !!baseISO && !done;
 
   return (
     <View style={styles.root}>
@@ -355,35 +354,30 @@ const canConfirmCash = isConfirmed && !row?.espece_confirmation;
             </View>
           </View>
 
-          {/* Compteur / infos annulation */}
+          {/* Infos / Compteur (informatif) */}
           {txnPaid || row.espece_confirmation ? (
             <View style={styles.infoPill}>
               <Ionicons name="checkmark-circle-outline" size={16} color="#2a7" />
               <Text style={styles.infoPillTxt}>
-                {txnPaid ? "Paiement confirmé — annulation indisponible" : "Paiement (espèces) confirmé — annulation indisponible"}
+                {txnPaid ? "Paiement confirmé" : "Paiement (espèces) confirmé"}
               </Text>
             </View>
           ) : showCountdown ? (
             <View style={styles.countdownPill}>
-              <Text style={styles.countdownLabel}>Il vous reste</Text>
+              <Text style={styles.countdownLabel}>Chrono informatif</Text>
               <Text style={styles.countdownTxt}>
                 {String(h).padStart(2, "0")}:{String(m).padStart(2, "0")}:{String(s).padStart(2, "0")}
               </Text>
-              <Text style={styles.countdownLabel}>pour annuler</Text>
+              <Text style={styles.countdownLabel}>après confirmation</Text>
             </View>
-          ) : (
-            <View style={styles.infoPill}>
-              <Ionicons name="time-outline" size={16} color="#777" />
-              <Text style={styles.infoPillTxt}>Délai d’annulation expiré</Text>
-            </View>
-          )}
+          ) : null}
 
           {/* Actions */}
           <View style={styles.actionsBar}>
             <TouchableOpacity
               onPress={onCancel}
-              style={[styles.secondaryBtn, (!canCancel || mutating) && { opacity: 0.35 }]}
-              disabled={!canCancel || mutating}
+              style={[styles.secondaryBtn, mutating && { opacity: 0.35 }]}
+              disabled={mutating}
               activeOpacity={0.9}
             >
               <Ionicons name="close-circle" size={18} color="#111" />

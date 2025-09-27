@@ -1,8 +1,16 @@
 // src/screens/LogementsScreen.tsx
-import React, { useEffect, useMemo, useRef, useState, useCallback, startTransition } from "react";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
-  View, Text, StyleSheet, FlatList, TouchableOpacity,
-  ActivityIndicator, ScrollView, ImageBackground, Dimensions, PixelRatio,
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  Image,
+  TouchableOpacity,
+  ActivityIndicator,
+  ScrollView,
+  ImageBackground,
+  Dimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -11,7 +19,6 @@ import SearchBar from "@/src/components/SearchBar";
 import SegmentedTabs from "@/src/components/SegmentedTabs";
 import BottomNavBar, { TabKey } from "@/src/components/BottomNavBar";
 import SearchModal, { Filters as BaseFilters } from "./SearchFiltersModal";
-import FastImage from "react-native-fast-image";
 
 type Filters = BaseFilters & {
   datesStart?: string; // "YYYY-MM-DD"
@@ -41,13 +48,26 @@ const unitFor = (t?: string | null) => {
 
 // Valeurs possibles en BDD (normalisées) par libellé du chip
 const TYPE_MAP: Record<string, string[]> = {
-  "Hôtel": ["hotel", "hôtel", "Hotel", "Hôtel"],
-  "Appartement meublé": ["appartement", "appartement meublé", "appartement_meublé", "Appartement", "Appartement meublé"],
-  "Maison à louer": ["maison", "maison à louer", "maison_a_louer", "Maison", "Maison à louer", "house"],
+  Hôtel: ["hotel", "hôtel", "Hotel", "Hôtel"],
+  "Appartement meublé": [
+    "appartement",
+    "appartement meublé",
+    "appartement_meublé",
+    "Appartement",
+    "Appartement meublé",
+  ],
+  "Maison à louer": [
+    "maison",
+    "maison à louer",
+    "maison_a_louer",
+    "Maison",
+    "Maison à louer",
+    "house",
+  ],
 };
 
 // Chips à afficher (on rajoute "Tout" en premier)
-const CHIP_LABELS = ["Tout", ...Object.keys(TYPE_MAP)];
+const CHIP_LABELS = ["Tout", ...Object.keys(TYPE_MAP)] as const;
 
 const { width: SCREEN_W } = Dimensions.get("window");
 const NUM_COLS = 2;
@@ -56,8 +76,6 @@ const CARD_W = Math.floor((SCREEN_W - GUTTER * (NUM_COLS + 1)) / NUM_COLS);
 const IMG_H = 170;
 const PANEL_BG = "#f4efe6";
 const CHIP_BG = "rgba(255,255,255,0.92)";
-const PLACEHOLDER_URL = "https://via.placeholder.com/600x400";
-const REFRESH_DEBOUNCE_MS = 250;
 
 // Mots-clés pour mapper les IDs "has_..." du modal vers equipements.name
 const EQUIP_KEYWORDS: Record<string, string[]> = {
@@ -71,95 +89,19 @@ const EQUIP_KEYWORDS: Record<string, string[]> = {
   has_balcony: ["balcon"],
 };
 
-// ---- Helpers perf images ----
-
-// Génère une URL miniature **si** c'est une URL publique Supabase Storage.
-// Sinon, retourne l'URL d’origine.
-function toThumb(url?: string) {
-  if (!url) return PLACEHOLDER_URL;
-  try {
-    // Supabase public: .../storage/v1/object/public/<bucket>/<path>
-    if (url.includes("/storage/v1/object/public/")) {
-      const [base] = url.split("?");
-      const transformed = base.replace("/object/public/", "/render/image/public/");
-      const pxW = Math.min(Math.round(CARD_W * PixelRatio.get()), 800);
-      const pxH = Math.min(Math.round(IMG_H * PixelRatio.get()), 800);
-      // cover = crop central, quality 75 = léger et net
-      return `${transformed}?width=${pxW}&height=${pxH}&quality=75&resize=cover`;
-    }
-  } catch {}
-  return url;
-}
-
-// Carte logement optimisée et mémoïsée (évite les re-rendus inutiles)
-const LogementCard = React.memo(function ({
-  item,
-  onOpen,
-}: {
-  item: Logement;
-  onOpen: (id: string) => void;
-}) {
-  const uri = toThumb(item.image_url) || PLACEHOLDER_URL;
-
-  return (
-    <TouchableOpacity
-      style={[styles.card, { width: CARD_W, marginHorizontal: GUTTER / 2 }]}
-      activeOpacity={0.9}
-      onPress={() => onOpen(item.id)}
-    >
-      <View style={styles.cardImageWrap}>
-        <FastImage
-          source={{
-            uri,
-            priority: FastImage.priority.high,
-            cache: FastImage.cacheControl.immutable,
-          }}
-          style={styles.cardImage}
-          resizeMode={FastImage.resizeMode.cover}
-        />
-        <View style={styles.heartBadge}>
-          <Ionicons name="heart-outline" size={18} color="#202020" />
-        </View>
-      </View>
-      <View style={styles.cardInfo}>
-        <Text style={styles.cardPrice}>
-          {item.price} XOF / {unitFor(item.rental_type)}
-        </Text>
-        <Text style={styles.cardTitle} numberOfLines={1}>
-          {item.title}
-        </Text>
-        <Text style={styles.cardLocation} numberOfLines={1}>
-          {item.city}
-          {item.quartier ? `, ${item.quartier}` : ""}
-        </Text>
-      </View>
-    </TouchableOpacity>
-  );
-}, (prev, next) => {
-  // Re-render uniquement si l'essentiel change
-  return (
-    prev.item.id === next.item.id &&
-    prev.item.image_url === next.item.image_url &&
-    prev.item.price === next.item.price &&
-    prev.item.title === next.item.title &&
-    prev.item.city === next.item.city &&
-    prev.item.quartier === next.item.quartier &&
-    prev.item.rental_type === next.item.rental_type
-  );
-});
-
 export default function LogementsScreen({ navigation }: any) {
   const [logements, setLogements] = useState<Logement[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [filters, setFilters] = useState<Filters | null>(null);
+  const [filters, setFilters] = useState<Filters | null>(null); // état des filtres du modal
   // Par défaut on garde le même comportement : rien de sélectionné => appartements
   const [activeChip, setActiveChip] = useState<string | null>(null); // null => "Appartement meublé"
   const [tab, setTab] = useState<"Logements" | "Véhicules" | "Expériences">("Logements");
-  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
-  const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // mapping simple si tu utilises "propertyTypes" du modal
+  // Realtime: un seul canal, jamais doublé
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const fetchRef = useRef<null | ((opts?: { showSpinner?: boolean }) => Promise<void>)>(null);
+
   const mapPropertyType = (t: string) => {
     const v = t.toLowerCase();
     if (v.includes("maison")) return "maison";
@@ -168,11 +110,32 @@ export default function LogementsScreen({ navigation }: any) {
     return v;
   };
 
-  // Utilitaire pour récupérer les logement_ids qui ont au moins un des équipements
+  // === Détection “filtres actifs” pour afficher les boutons Réinitialiser ===
+  const hasActiveFilters = useMemo(() => {
+    const f = filters;
+    const base = Boolean(
+      f &&
+        (
+          (f.searchQuery && f.searchQuery.trim() !== "") ||
+          (f.locationText && f.locationText.trim() !== "") ||
+          typeof f.minPrice === "number" ||
+          typeof f.maxPrice === "number" ||
+          (f.propertyTypes && f.propertyTypes.length > 0) ||
+          (f.equipments && f.equipments.length > 0) ||
+          ((f.roomCount ?? 1) > 1) ||
+          ((f.bathroomCount ?? 1) > 1) ||
+          ((f.guestCount ?? 1) > 1) ||
+          (f.datesStart && f.datesEnd)
+        )
+    );
+    // Chip actif (y compris "Tout") compte comme filtre — sauf null (état baseline = Appartements)
+    return base || activeChip !== null;
+  }, [filters, activeChip]);
+
+  // ————— Utilitaires de filtrage pré-requête —————
   const fetchLogementIdsByEquipments = useCallback(async (equipKeys: string[]) => {
     if (!equipKeys.length) return null;
 
-    // 1) on traduit les clés 'has_wifi' -> mots-clés name.ilike
     const words = Array.from(
       new Set(
         equipKeys
@@ -183,7 +146,6 @@ export default function LogementsScreen({ navigation }: any) {
     );
     if (!words.length) return null;
 
-    // 2) on récupère les equipements(category='logement') dont le name matche au moins un mot
     const orFilter = words.map((w) => `name.ilike.%${w}%`).join(",");
     const { data: eqRows, error: eqErr } = await supabase
       .from("equipements")
@@ -198,7 +160,6 @@ export default function LogementsScreen({ navigation }: any) {
     const equipIds = (eqRows || []).map((r: any) => r.id);
     if (!equipIds.length) return [];
 
-    // 3) on récupère les logements qui possèdent au moins un de ces équipements
     const { data: linkRows, error: linkErr } = await supabase
       .from("listing_equipements")
       .select("logement_id")
@@ -214,7 +175,6 @@ export default function LogementsScreen({ navigation }: any) {
     return ids;
   }, []);
 
-  // Utilitaire : exclude ids réservés si on a un range de dates
   const fetchBusyLogementIds = useCallback(async (dStart?: string, dEnd?: string) => {
     if (!dStart || !dEnd) return [];
     // overlap si: res.start_date <= dEnd AND res.end_date >= dStart
@@ -224,7 +184,7 @@ export default function LogementsScreen({ navigation }: any) {
       .not("logement_id", "is", null)
       .lte("start_date", dEnd)
       .gte("end_date", dStart)
-      .in("status", ["pending", "confirmed", "completed"]); // on ignore "cancelled"
+      .in("status", ["pending", "confirmed", "completed"]); // ignore "cancelled"
 
     if (error) {
       console.error(error);
@@ -234,21 +194,21 @@ export default function LogementsScreen({ navigation }: any) {
     return ids;
   }, []);
 
-  // ------- Fetch (on garde ta logique et on empile des filtres) -------
+  // ————— Fetch principal —————
   const fetchLogements = useCallback(
     async (opts?: { showSpinner?: boolean }) => {
       const showSpinner = opts?.showSpinner ?? true;
       if (showSpinner) setLoading(true);
 
       try {
-        let constrainIds: string[] | null = null;  // whiteliste via équipements
-        let excludeIds: string[] = [];             // blacklist via disponibilités
+        let constrainIds: string[] | null = null; // whitelist via équipements
+        let excludeIds: string[] = []; // blacklist via disponibilités
 
         if (filters?.equipments?.length) {
           const ids = await fetchLogementIdsByEquipments(filters.equipments);
           if (ids && ids.length === 0) {
-            startTransition(() => setLogements([]));
-            if (showSpinner) setLoading(false);
+            setLogements([]);
+            setLoading(false);
             return;
           }
           constrainIds = ids;
@@ -266,9 +226,9 @@ export default function LogementsScreen({ navigation }: any) {
           `)
           .eq("is_approved", true);
 
-        // —— chips
+        // Chips
         if (activeChip === "Tout") {
-          // pas de filtre
+          // aucun filtre sur type
         } else if (!activeChip) {
           query = query.in("type", TYPE_MAP["Appartement meublé"]);
         } else {
@@ -276,7 +236,7 @@ export default function LogementsScreen({ navigation }: any) {
           query = query.in("type", values);
         }
 
-        // —— Filtres simples
+        // Filtres simples
         if (filters?.searchQuery) {
           const t = filters.searchQuery.replace(/%/g, "");
           query = query.or(`title.ilike.%${t}%,description.ilike.%${t}%`);
@@ -288,29 +248,32 @@ export default function LogementsScreen({ navigation }: any) {
         if (typeof filters?.minPrice === "number") query = query.gte("price", filters.minPrice!);
         if (typeof filters?.maxPrice === "number") query = query.lte("price", filters.maxPrice!);
 
+        // Compteurs (filtrer seulement si > 1)
         if ((filters?.roomCount ?? 1) > 1) query = query.gte("bedrooms", filters!.roomCount!);
         if ((filters?.bathroomCount ?? 1) > 1) query = query.gte("showers", filters!.bathroomCount!);
         if ((filters?.guestCount ?? 1) > 1) query = query.gte("max_guests", filters!.guestCount!);
 
+        // Types depuis le modal
         if (filters?.propertyTypes?.length) {
           const norm = filters.propertyTypes.map(mapPropertyType);
           query = query.in("type", norm);
         }
 
+        // Contrainte équipements
         if (constrainIds && constrainIds.length) {
           query = query.in("id", constrainIds);
         }
 
+        // Exclusions via disponibilités
         if (excludeIds.length) {
           const inList = `(${excludeIds.map((id) => `"${id}"`).join(",")})`;
           query = query.not("id", "in", inList);
         }
 
         const { data, error } = await query;
-
         if (error) {
           console.error(error);
-          startTransition(() => setLogements([]));
+          setLogements([]);
         } else {
           const items = (data as any[]).map((x) => ({
             id: x.id,
@@ -321,14 +284,8 @@ export default function LogementsScreen({ navigation }: any) {
             quartier: x.quartier,
             rental_type: x.rental_type,
             image_url: x.listing_images?.[0]?.image_url,
-          })) as Logement[];
-
-          // Transition non bloquante (React 19) pour éviter les saccades UI
-          startTransition(() => setLogements(items));
-
-          // Précharger les 12 premières images (défilement plus fluide)
-          const preload = items.slice(0, 12).map((it) => ({ uri: toThumb(it.image_url) || PLACEHOLDER_URL }));
-          FastImage.preload(preload);
+          }));
+          setLogements(items);
         }
       } finally {
         if (showSpinner) setLoading(false);
@@ -337,51 +294,57 @@ export default function LogementsScreen({ navigation }: any) {
     [activeChip, filters, fetchBusyLogementIds, fetchLogementIdsByEquipments]
   );
 
+  // Garder une ref stable vers fetchLogements pour Realtime
+  useEffect(() => {
+    fetchRef.current = fetchLogements;
+  }, [fetchLogements]);
+
   // Initial fetch + refetch quand chip/filtres changent
   useEffect(() => {
     fetchLogements({ showSpinner: true });
   }, [activeChip, filters, fetchLogements]);
 
-  // Revenir focus => soft refresh
+  // Soft refresh au focus
   useEffect(() => {
-    const unsub = navigation.addListener("focus", () => fetchLogements({ showSpinner: false }));
+    const unsub = navigation.addListener("focus", () =>
+      fetchLogements({ showSpinner: false })
+    );
     return unsub;
   }, [navigation, fetchLogements]);
 
-  // Realtime avec **dé-bounce** (évite 2 fetchs si listings + images bougent)
-  const scheduleRefetch = useCallback(() => {
-    if (refetchTimer.current) clearTimeout(refetchTimer.current);
-    refetchTimer.current = setTimeout(() => {
-      fetchLogements({ showSpinner: false });
-    }, REFRESH_DEBOUNCE_MS);
-  }, [fetchLogements]);
-
+  // Realtime — un seul canal, jamais doublé
   useEffect(() => {
-    channelRef.current?.unsubscribe();
+    if (channelRef.current) {
+      void supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
+    }
 
-    const channel = supabase
-      .channel("realtime-listings")
+    const handleChange = () => fetchRef.current?.({ showSpinner: false });
+
+    const ch = supabase
+      .channel("logements-rt")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "listings_logements" },
-        () => scheduleRefetch()
+        handleChange
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "listing_images" },
-        () => scheduleRefetch()
+        handleChange
       )
       .subscribe();
 
-    channelRef.current = channel;
+    channelRef.current = ch;
     return () => {
-      if (refetchTimer.current) clearTimeout(refetchTimer.current);
-      channel.unsubscribe();
-      channelRef.current = null;
+      if (channelRef.current) {
+        void supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
     };
-  }, [scheduleRefetch]);
+  }, []); // <= pas de dépendances -> un seul abonnement
 
-  // grille homogène
+  // Données pour grille homogène
   const gridData = useMemo(() => {
     if (logements.length % NUM_COLS === 0) return logements;
     const fillers = NUM_COLS - (logements.length % NUM_COLS);
@@ -393,25 +356,44 @@ export default function LogementsScreen({ navigation }: any) {
     ];
   }, [logements]);
 
-  // Navigation vers le détail (stable ref pour éviter re-rendus)
-  const openDetails = useCallback(
-    (id: string) => navigation.navigate("LogementDetails", { id }),
-    [navigation]
-  );
-
-  const renderItem = useCallback(
-    ({ item }: { item: Logement }) => {
-      if (item.__empty) return <View style={{ width: CARD_W, marginHorizontal: GUTTER / 2 }} />;
-      return <LogementCard item={item} onOpen={openDetails} />;
-    },
-    [openDetails]
-  );
+  const renderItem = ({ item }: { item: Logement }) => {
+    if (item.__empty) return <View style={{ width: CARD_W, marginHorizontal: GUTTER / 2 }} />;
+    return (
+      <TouchableOpacity
+        style={[styles.card, { width: CARD_W, marginHorizontal: GUTTER / 2 }]}
+        activeOpacity={0.9}
+        onPress={() => navigation.navigate("LogementDetails", { id: item.id })}
+      >
+        <View style={styles.cardImageWrap}>
+          <Image
+            source={{ uri: item.image_url || "https://via.placeholder.com/600x400" }}
+            style={styles.cardImage}
+          />
+          <View style={styles.heartBadge}>
+            <Ionicons name="heart-outline" size={18} color="#202020" />
+          </View>
+        </View>
+        <View style={styles.cardInfo}>
+          <Text style={styles.cardPrice}>
+            {item.price} XOF / {unitFor(item.rental_type)}
+          </Text>
+          <Text style={styles.cardTitle} numberOfLines={1}>
+            {item.title}
+          </Text>
+          <Text style={styles.cardLocation} numberOfLines={1}>
+            {item.city}
+            {item.quartier ? `, ${item.quartier}` : ""}
+          </Text>
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   const handleTabChange = (next: "Logements" | "Véhicules" | "Expériences") => {
     setTab(next);
     if (next === "Logements") return;
-    if (next === "Véhicules") navigation.navigate("Logements");
-    if (next === "Expériences") navigation.navigate("Logements");
+    if (next === "Véhicules") navigation.navigate("Vehicules");
+    if (next === "Expériences") navigation.navigate("Experiences");
   };
 
   const handleBottomTab = (k: TabKey) => {
@@ -433,11 +415,11 @@ export default function LogementsScreen({ navigation }: any) {
     }
   };
 
-  // Réinitialiser — état de départ
+  // ——— Reset : un seul tap, pas de fetch manuel ———
   const resetAll = () => {
     setFilters(null);
     setActiveChip(null);
-    fetchLogements({ showSpinner: true });
+    // on laisse l'useEffect déclencher le fetch → évite le “double tap”
   };
 
   if (loading) {
@@ -461,7 +443,7 @@ export default function LogementsScreen({ navigation }: any) {
         <SafeAreaView edges={["top"]} style={styles.bannerSafe}>
           <SegmentedTabs value={tab} onChange={handleTabChange} />
 
-          {/* Search centrée */}
+          {/* Recherche au centre */}
           <View style={styles.searchCenter}>
             <SearchBar topOffset={0} style={{ width: "92%" }} onPress={() => setSearchOpen(true)} />
           </View>
@@ -486,24 +468,38 @@ export default function LogementsScreen({ navigation }: any) {
               );
             })}
           </ScrollView>
+
+          {/* Bouton Réinitialiser (inline, sous les chips) */}
+          {hasActiveFilters && (
+            <View style={{ alignItems: "center", marginTop: 10 }}>
+              <TouchableOpacity onPress={resetAll} style={styles.resetInlineBtn} activeOpacity={0.9}>
+                <Ionicons name="refresh" size={16} color="#111" />
+                <Text style={styles.resetInlineTxt}>Réinitialiser</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </SafeAreaView>
       </ImageBackground>
 
       {/* ===== Panel contenu ===== */}
       <View style={styles.panel}>
-        <View style={styles.actionsRow}>
-          <TouchableOpacity style={styles.actionCard} onPress={() => setSearchOpen(true)}>
-            <Text style={styles.actionText}>Filtrer</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.actionCard} onPress={resetAll}>
-            <Text style={styles.actionText}>Réinitialiser</Text>
-          </TouchableOpacity>
+        {/* En-tête section + reset à droite (optionnel) */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Logements populaires</Text>
+          {hasActiveFilters && (
+            <TouchableOpacity onPress={resetAll} style={styles.resetSmallBtn} activeOpacity={0.9}>
+              <Ionicons name="refresh" size={16} color="#111" />
+              <Text style={styles.resetSmallTxt}>Réinitialiser</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {showEmpty ? (
           <View style={{ alignItems: "center", paddingTop: 40, paddingHorizontal: 16 }}>
             <Ionicons name="search-outline" size={36} color="#6b6b6b" />
-            <Text style={{ marginTop: 10, fontWeight: "800", color: "#111" }}>Aucun logement trouvé</Text>
+            <Text style={{ marginTop: 10, fontWeight: "800", color: "#111" }}>
+              Aucun logement trouvé
+            </Text>
             <Text style={{ marginTop: 4, color: "#6b6b6b", textAlign: "center" }}>
               Essaie d’élargir ta recherche ou réinitialise les filtres.
             </Text>
@@ -520,17 +516,11 @@ export default function LogementsScreen({ navigation }: any) {
             columnWrapperStyle={{ paddingHorizontal: GUTTER }}
             contentContainerStyle={styles.list}
             showsVerticalScrollIndicator={false}
-            // ---- Virtualization perf ----
-            initialNumToRender={8}
-            maxToRenderPerBatch={10}
-            updateCellsBatchingPeriod={16}
-            windowSize={7}
-            removeClippedSubviews
           />
         )}
       </View>
 
-      {/* Bottom Nav avec onRequireAuth conservé */}
+      {/* Bottom Nav */}
       <BottomNavBar
         current="logements"
         onChange={handleBottomTab}
@@ -582,26 +572,51 @@ const styles = StyleSheet.create({
     paddingTop: 12,
   },
 
-  actionsRow: {
+  // Section header + reset
+  sectionHeader: {
     flexDirection: "row",
+    alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 16,
     marginBottom: 8,
   },
-  actionCard: { backgroundColor: "#efe7dc", borderRadius: 18, paddingVertical: 14, paddingHorizontal: 32 },
+  sectionTitle: { fontSize: 22, fontWeight: "900", color: "#111" },
+
+  resetSmallBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "rgba(0,0,0,0.06)",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 12,
+  },
+  resetSmallTxt: { fontWeight: "900", color: "#111" },
+
+  resetInlineBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "rgba(255,255,255,0.9)",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+  },
+  resetInlineTxt: { fontWeight: "900", color: "#111" },
+
+  // Bouton action (fallback)
+  actionCard: {
+    backgroundColor: "#efe7dc",
+    borderRadius: 18,
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+  },
   actionText: { fontSize: 16, fontWeight: "700", color: "#303030" },
 
-  // espace suffisant pour scroller au-dessus de la barre
+  // espace pour scroller au-dessus de la barre
   list: { paddingTop: 6, paddingBottom: 70 },
 
-  card: {
-    borderRadius: 18,
-    backgroundColor: "#fff",
-    overflow: "hidden",
-    marginVertical: 10,
-    // petits boosts GPU:
-    elevation: 1,
-  },
+  card: { borderRadius: 18, backgroundColor: "#fff", overflow: "hidden", marginVertical: 10 },
   cardImageWrap: {
     width: "100%",
     height: IMG_H,

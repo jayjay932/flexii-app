@@ -118,7 +118,7 @@ export default function BottomNavBar({
 const styles = StyleSheet.create({
   abs: { position: "absolute", left: 0, right: 0, bottom: 0 },
   bg: {
-    backgroundColor: "#fff",
+    backgroundColor: "#e9e7e7ff",
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "rgba(0,0,0,0.08)",
   },
@@ -126,12 +126,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-around",
     alignItems: "flex-end",
-    paddingTop: 14,
+    paddingTop: 10,
   },
-  item: { alignItems: "center", justifyContent: "center", paddingHorizontal: 8 },
-  iconWrap: { position: "relative", height: 26, justifyContent: "center" },
-  label: { marginTop: 2, fontSize: 12, color: "#8C8C8C", fontWeight: "600" },
-  labelActive: { color: "#000" },
+  item: { alignItems: "center", justifyContent: "center", paddingHorizontal: 4 },
+  iconWrap: { position: "relative", height: 25, justifyContent: "center" },
+  label: { marginTop: 2, fontSize: 12, color: "#807979ff", fontWeight: "600" },
+  labelActive: { color: "#000000ff" },
 
   badge: {
     position: "absolute",
