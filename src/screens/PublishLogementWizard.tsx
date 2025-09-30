@@ -14,6 +14,7 @@ import {
   TouchableWithoutFeedback,
   InputAccessoryView,
   Image,
+  Linking,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -37,7 +38,7 @@ type IoniconName = React.ComponentProps<typeof Ionicons>["name"];
 /* Constantes                                            */
 /* ---------------------------------------------------- */
 const IA_ID = "publish-toolbar";
-const BUCKET = "listing-images";              // ✅ même que EditListingScreen
+const BUCKET = "listing-images"; // ✅ même que EditListingScreen
 const MIN_PICS = 4;
 
 const HOUSE_TYPES = [
@@ -48,12 +49,11 @@ const HOUSE_TYPES = [
 
 const RENTAL_TYPES = ["heure", "nuit", "jour", "mois"] as const;
 
-// Seuils (alignés avec ta logique)
 const TITLE_MIN = 4;
 const DESC_MIN = 20;
 
 /* ---------------------------------------------------- */
-/* Helpers communs                                       */
+/* Helpers                                               */
 /* ---------------------------------------------------- */
 function base64ToUint8Array(base64: string) {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -81,17 +81,51 @@ function guessContentType(uri: string) {
   return { ext: "jpg", contentType: "image/jpeg" };
 }
 
-async function pickSingleImage(): Promise<Picked | null> {
-  const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (status !== "granted") {
-    Alert.alert("Permission", "Autorise l’accès aux photos pour ajouter des images.");
-    return null;
+/** ✅ Demande d’autorisation claire (conforme App Store) */
+async function ensurePhotoPermission(): Promise<boolean> {
+  try {
+    // 1) Vérifie l’état actuel
+    let perm = await ImagePicker.getMediaLibraryPermissionsAsync();
+
+    // 2) Demande si possible
+    if (perm.status !== "granted" && perm.canAskAgain) {
+      perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    }
+
+    // 3) Si toujours pas accordée
+    if (perm.status !== "granted") {
+      Alert.alert(
+        "Accès aux photos requis",
+        "Flexii utilise vos photos pour illustrer vos annonces (ex. photos du logement). Vous pouvez autoriser l’accès dans Réglages.",
+        [
+          { text: "Ouvrir Réglages", onPress: () => Linking.openSettings() },
+          { text: "Annuler", style: "cancel" },
+        ]
+      );
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error("ensurePhotoPermission error", e);
+    Alert.alert("Oups", "Impossible de vérifier la permission Photos.");
+    return false;
   }
+}
+
+/** ✅ Ouvre la galerie de façon sûre (déclenche la pop-up iOS au bon moment) */
+async function pickSingleImage(): Promise<Picked | null> {
+  const ok = await ensurePhotoPermission();
+  if (!ok) return null;
+
   const res = await ImagePicker.launchImageLibraryAsync({
     mediaTypes: ImagePicker.MediaTypeOptions.Images,
-    quality: 0.85,
+    quality: 0.9,
     base64: true,
+    selectionLimit: 1,
+    exif: false,
+    allowsEditing: false,
   });
+
   if (res.canceled || !res.assets?.length) return null;
   const a = res.assets[0];
   return { uri: a.uri, base64: a.base64 || undefined };
@@ -273,7 +307,6 @@ export default function PublishLogementScreen({ navigation }: Props) {
   const invalidPrice = isNaN(Number(price)) || Number(price) <= 0;
   const invalidImages = images.length < MIN_PICS;
 
-  // Reste de ta logique de validation globale (gardée)
   const canPublish = useMemo(() => {
     return (
       !invalidTitle &&
@@ -286,9 +319,14 @@ export default function PublishLogementScreen({ navigation }: Props) {
   }, [invalidTitle, invalidDesc, invalidCity, rentalType, invalidPrice, invalidImages]);
 
   const addPhoto = async () => {
-    const picked = await pickSingleImage();
-    if (!picked) return;
-    setImages((prev) => [{ uri: picked.uri, base64: picked.base64 }, ...prev]);
+    try {
+      const picked = await pickSingleImage();
+      if (!picked) return;
+      setImages((prev) => [{ uri: picked.uri, base64: picked.base64 }, ...prev]);
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert("Oups", "Impossible d’ouvrir votre galerie.");
+    }
   };
 
   const removePhoto = (uri: string) => {
@@ -303,15 +341,13 @@ export default function PublishLogementScreen({ navigation }: Props) {
     try {
       if (publishing) return;
 
-      // Si invalide : alerte récap et stop (le bouton n'est plus grisé, mais on bloque l'envoi)
       if (!canPublish) {
         const errs: string[] = [];
-        if (invalidTitle) errs.push(`Titre : ${TITLE_MIN} caractères minimum demandés (il manque ${Math.max(0, TITLE_MIN - title.trim().length)})`);
-        if (invalidDesc) errs.push(`Description : ${DESC_MIN} caractères minimum demandés (il manque ${Math.max(0, DESC_MIN - description.trim().length)})`);
+        if (invalidTitle) errs.push(`Titre : ${TITLE_MIN} caractères minimum (il manque ${Math.max(0, TITLE_MIN - title.trim().length)})`);
+        if (invalidDesc) errs.push(`Description : ${DESC_MIN} caractères minimum (il manque ${Math.max(0, DESC_MIN - description.trim().length)})`);
         if (invalidCity) errs.push("Ville : champ requis");
         if (invalidPrice) errs.push("Prix : un nombre positif est requis");
         if (invalidImages) errs.push(`Photos : ${MIN_PICS} minimum (il manque ${Math.max(0, MIN_PICS - images.length)})`);
-
         Alert.alert("Formulaire incomplet", "Corrige ces points :\n\n• " + errs.join("\n• "));
         return;
       }
@@ -351,9 +387,7 @@ export default function PublishLogementScreen({ navigation }: Props) {
       // 2) upload photos — ordre respecté (0,1,2,…) + filenames indexés
       for (let i = 0; i < images.length; i++) {
         const img = images[i];
-        const base64 =
-          img.base64 ?? (await FileSystem.readAsStringAsync(img.uri, { encoding: "base64" }));
-
+        const base64 = img.base64 ?? (await FileSystem.readAsStringAsync(img.uri, { encoding: "base64" }));
         const bytes = base64ToUint8Array(base64);
         const { ext, contentType } = guessContentType(img.uri);
         const filename = `${String(i).padStart(3, "0")}_${Date.now()}.${ext}`;
@@ -448,13 +482,12 @@ export default function PublishLogementScreen({ navigation }: Props) {
               <Card>
                 <View style={styles.imagesHeader}>
                   <Label>Photos</Label>
-                  
                   <TouchableOpacity onPress={addPhoto} style={styles.addPhotoBtn} activeOpacity={0.9}>
                     <Text style={styles.addPhotoTxt}>Ajouter une photo</Text>
                   </TouchableOpacity>
-                  
                 </View>
-                <Text> ATTENTION LA DERNIERE PHOTO SERA LA 1ERE     </Text>
+
+                <Text>ATTENTION : la dernière photo ajoutée sera affichée en première.</Text>
 
                 <View style={[styles.imagesGrid, invalidImages && styles.imagesGridError]}>
                   <TouchableOpacity onPress={addPhoto} style={styles.plusTile} activeOpacity={0.8}>
@@ -565,7 +598,7 @@ export default function PublishLogementScreen({ navigation }: Props) {
       <SafeAreaView edges={["bottom"]} style={styles.footer}>
         <TouchableOpacity
           style={[styles.saveBtn, publishing && { opacity: 0.6 }]}
-          disabled={publishing}               // 👈 bouton toujours actif (sauf pendant la requête)
+          disabled={publishing}
           onPress={publish}
           activeOpacity={0.9}
         >

@@ -27,6 +27,11 @@ import VehiculesScreen from "../screens/VehiculesScreen";
 import VehiculeDetailsScreen from "../screens/VehiculeDetailsScreen";
 import PublishVehiculeScreen from "../screens/PublishVehiculeScreen";
 import ProfileScreenVehicules from "../screens/ProfileScreenVehicules";
+import DataSafetyScreen from "../screens/DataSafetyScreen";
+import LegalScreen from "../screens/LegalScreen";
+import PrivacyScreen from "../screens/PrivacyScreen";
+import HelpScreen from "../screens/HelpScreen";
+import FavoritesScreen from "../screens/FavoritesScreen";
 
 
 // ..
@@ -42,6 +47,7 @@ type DraftBase = {
   currency?: Money;
 };
 
+
 export type RootStackParamList = {
   Welcome: undefined;
   Home: undefined;
@@ -50,10 +56,11 @@ export type RootStackParamList = {
   Experiences: undefined;
   PublishLogement: undefined;
   LogementsFilters: undefined;
-
+  legal : undefined;
+help :undefined;
   BookingSummary: { listingId: string; acceptedPrice?: number };
   AllReviews: { listingId: string; title?: string };
-
+Favoris :undefined;
   Chat: {
     listingId: string;
     ownerId: string;
@@ -61,6 +68,7 @@ export type RootStackParamList = {
     conversationId?: string;
     forceOpenNegotiation?: boolean;
   };
+  DataSafety :  undefined;
 
   OwnerReservationDetails: { id: string };
 
@@ -77,6 +85,7 @@ export type RootStackParamList = {
   MyListings: undefined;
   PublishListing: undefined;
   PublishVehicule: undefined;
+  privacy: undefined;
 
   AvailabilityDashboard: undefined;
   AvailabilityCalendar: {
@@ -134,6 +143,8 @@ export default function RootNavigator() {
       <Stack.Screen name="Home" component={HomePage} />
       <Stack.Screen name="Logements" component={LogementsScreen} />
       <Stack.Screen name="LogementDetails" component={LogementDetailsScreen} />
+      <Stack.Screen name="privacy" component={PrivacyScreen} />
+      <Stack.Screen name="help" component={HelpScreen} />
 
       <Stack.Screen
         name="AllReviews"
@@ -144,6 +155,12 @@ export default function RootNavigator() {
       <Stack.Screen
         name="Chat"
         component={ChatScreen}
+        options={{ headerShown: false }}
+      />
+      
+      <Stack.Screen
+        name="Favoris"
+        component={FavoritesScreen}
         options={{ headerShown: false }}
       />
 
@@ -172,11 +189,25 @@ export default function RootNavigator() {
 
 
 
+
 <Stack.Screen
   name="Checkout"
   component={CheckoutScreen}
   options={{ headerShown: false }}
 />
+
+<Stack.Screen
+  name="DataSafety"
+  component={DataSafetyScreen}
+  options={{ headerShown: false }}
+/>
+
+<Stack.Screen
+  name="legal"
+  component={LegalScreen}
+  options={{ headerShown: false }}
+/>
+
 
 <Stack.Screen name="Experiences" component={LogementsScreen} />
       <Stack.Screen name="Vehicules" component={ VehiculesScreen} />

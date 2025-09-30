@@ -105,7 +105,7 @@ export default function BottomNavBar({
       <View style={styles.bg}>
         <View style={[styles.bar, { paddingBottom: 10 + insets.bottom }]}>
           <Item k="logements" label="Explorer" icon="search" />
-          <Item k="logements" label="Favoris" icon="heart-outline" />
+          <Item k="Favoris" label="Favoris" icon="heart-outline" />
           <Item k="Voyages" label="Réservations" icon="airplane-outline" />
           <Item k="Messages" label="Messages" icon="chatbubble-ellipses-outline" badgeContent={messagesBadge ?? null} />
           <Item k="Profil" label="Profil" icon="person-circle-outline" />

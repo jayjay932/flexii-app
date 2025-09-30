@@ -38,7 +38,7 @@ const prettyName = (n?: string | null) => (n || "").trim() || "Utilisateur";
 // 👉 mapping onglet → nom de route dans ton RootStackParamList
 const TAB_TO_SCREEN: Record<TabKey, keyof RootStackParamList> = {
   logements: "Logements",
-  Favoris: "Logements",
+  Favoris: "Reservations",
   Voyages: "Reservations",
   Messages: "Conversations",
   Profil: "Profile",
@@ -416,25 +416,19 @@ export default function ProfileScreen({ navigation }: Props) {
           <SettingsList
             items={[
               {
-                icon: "settings-outline",
-                label: "Paramètres du compte",
-                onPress: () => navigation.navigate("Profile"),
-                dot: true,
-              },
-              {
                 icon: "help-circle-outline",
                 label: "Obtenir de l'aide",
-                onPress: () => navigation.navigate("Profile"),
+                onPress: () => navigation.navigate("help"),
               },
               {
                 icon: "person-outline",
-                label: "Voir le profil",
-                onPress: () => navigation.navigate("Profile"),
+                label: "Autorisation de donné",
+                onPress: () => navigation.navigate("DataSafety"),
               },
               {
                 icon: "shield-outline",
                 label: "Confidentialité",
-                onPress: () => navigation.navigate("Profile"),
+                onPress: () => navigation.navigate("privacy"),
               },
               { divider: true },
               {
@@ -450,7 +444,7 @@ export default function ProfileScreen({ navigation }: Props) {
               {
                 icon: "newspaper-outline",
                 label: "Juridique",
-                onPress: () => navigation.navigate("Profile"),
+                onPress: () => navigation.navigate("legal"),
               },
              { icon: "log-out-outline", label: "Se déconnecter", danger: true, onPress: signOut }
 ,

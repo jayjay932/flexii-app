@@ -1,0 +1,15 @@
+{
+  "NSPhotoLibraryUsageDescription": "Flexii needs access to your photo library to add photos to your listings (e.g., images of the home or vehicle). Without this access, you won’t be able to pick existing images for your listing.",
+  "NSPhotoLibraryAddUsageDescription": "Flexii can save images (e.g., booking receipts, PDF exports, or edited photos) to your library when you request it.",
+  "NSCameraUsageDescription": "Flexii uses the camera to take photos of your home or vehicle to publish in a listing.",
+  "NSLocationWhenInUseUsageDescription": "Flexii uses your location to improve nearby search (e.g., listings around you). No background tracking.",
+
+  "App_Store_Screenshots_Note": "Upload real iPad screenshots (e.g., iPad Pro 13”) showing core features (search, listing details, booking, messaging).",
+  "Support_Email": "flexii@flexiihouse.com",
+  "Privacy_Email": "privacy@flexiihouse.com",
+  "Website": "https://flexiihouse.com",
+  "Delete_Account_URL": "https://flexiihouse.com/delete-account",
+  "Licenses_URL": "https://flexiihouse.com/legal/open-source-licenses",
+  "Terms_URL": "https://flexiihouse.com/legal/terms",
+  "Privacy_URL": "https://flexiihouse.com/politique-de-confidentialite"
+}

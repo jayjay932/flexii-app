@@ -1,5 +1,5 @@
 // src/screens/LogementDetailsScreen.tsx
-import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   ScrollView,
+  Image,
   FlatList,
   Dimensions,
   Modal,
@@ -17,13 +18,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { CalendarList, DateData, LocaleConfig } from "react-native-calendars";
-import FastImage from "react-native-fast-image";
 import { supabase } from "@/src/lib/supabase";
 import { RootStackParamList } from "../navigation/RootNavigator";
 import type { Session } from "@supabase/supabase-js";
-
-/* Alias de type pour les sources FastImage (évite les erreurs TS) */
-type FISource = React.ComponentProps<typeof FastImage>["source"];
 
 /* ------- Localisation FR pour react-native-calendars ------- */
 LocaleConfig.locales.fr = {
@@ -135,13 +132,6 @@ const demoRange = () => {
   return `${start.toLocaleDateString("fr-FR", opt)} – ${end.toLocaleDateString("fr-FR", opt)}`;
 };
 
-/* Helpers UTC-safe (évite les décalages DST) */
-const toUTC = (iso: string) => {
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(Date.UTC(y, (m ?? 1) - 1, d ?? 1));
-};
-const keyUTC = (d: Date) => d.toISOString().slice(0, 10);
-
 /* ====== Screen ====== */
 export default function LogementDetailsScreen({ route, navigation }: Props) {
   const { id } = route.params;
@@ -189,10 +179,6 @@ export default function LogementDetailsScreen({ route, navigation }: Props) {
   // --- Réservation (draft) ---
   const [savingReservation, setSavingReservation] = useState(false);
 
-  // Refs pour Realtime (évite closures périmées)
-  const fetchCalendarRef = useRef<null | (() => Promise<void>)>(null);
-  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
-
   // Calcul du nombre de nuits (sélection = un seul jour → 1)
   const nights = useMemo(() => {
     if (!startDate || !endDate) return 1;
@@ -239,7 +225,7 @@ export default function LogementDetailsScreen({ route, navigation }: Props) {
     setSelectedAddOns((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   };
 
-  // 👉 handler "Négocier" (inchangé)
+  // 👉 handler "Négocier"
   const onPressNegocier = async () => {
     try {
       const { data: authData } = await supabase.auth.getSession();
@@ -325,7 +311,7 @@ export default function LogementDetailsScreen({ route, navigation }: Props) {
     }
   };
 
-  // retour depuis chat avec prix négocié → ouvre calendrier (inchangé)
+  // retour depuis chat avec prix négocié → ouvre calendrier
   useEffect(() => {
     if (route.params?.resetFromChatReserve) {
       if (typeof route.params?.negotiatedUnitPrice === "number") {
@@ -353,64 +339,7 @@ export default function LogementDetailsScreen({ route, navigation }: Props) {
     };
   }, []);
 
-  /* ====== Fetch calendrier (réutilisable + realtime) ====== */
-  const fetchCalendar = useCallback(async () => {
-    // 3) Réservations confirmées/completed → jours indispo (fin EXCLUE)
-    const { data: res } = await supabase
-      .from("reservations")
-      .select("start_date, end_date, status")
-      .eq("logement_id", id)
-      .in("status", ["confirmed", "completed"]);
-
-    const disabledByResa: Record<string, true> = {};
-    (res ?? []).forEach((r) => {
-      if (r.start_date && r.end_date) {
-        const start = toUTC(r.start_date);
-        const end = toUTC(r.end_date);
-        const endExclusive =
-          end.getTime() <= start.getTime()
-            ? new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate() + 1))
-            : end;
-        for (let d = new Date(start); d < endExclusive; d.setUTCDate(d.getUTCDate() + 1)) {
-          disabledByResa[keyUTC(d)] = true;
-        }
-      }
-    });
-
-    // 3bis) Overrides (prix + indispo)
-    const today = new Date();
-    const future = new Date();
-    future.setMonth(future.getMonth() + 18);
-    const todayKey = today.toISOString().slice(0, 10);
-    const futureKey = future.toISOString().slice(0, 10);
-
-    const { data: ov } = await supabase
-      .from("availability_overrides")
-      .select("date, is_available, price")
-      .eq("listing_type", "logement")
-      .eq("listing_id", id)
-      .gte("date", todayKey)
-      .lte("date", futureKey);
-
-    const ovPrices: Record<string, number> = {};
-    const ovDisabled: Record<string, true> = {};
-    (ov ?? []).forEach((r: any) => {
-      const k = r.date;
-      if (r.is_available === false) ovDisabled[k] = true;
-      if (r.price != null) ovPrices[k] = Number(r.price);
-    });
-
-    setOverridePrices(ovPrices);
-    setOverrideUnavailable(ovDisabled);
-    setUnavailable({ ...disabledByResa, ...ovDisabled });
-  }, [id]);
-
-  // Expose dans ref (pour handlers realtime)
-  useEffect(() => {
-    fetchCalendarRef.current = fetchCalendar;
-  }, [fetchCalendar]);
-
-  /* ===== Chargements init (listing + équipements + add-ons + avis + calendrier) ===== */
+  /* ===== Chargements init ===== */
   useEffect(() => {
     let cancelled = false;
 
@@ -449,7 +378,7 @@ export default function LogementDetailsScreen({ route, navigation }: Props) {
             id, title, description, price, city, quartier,
             bedrooms, toilets, showers, max_guests,
             check_in_start, check_out,
-            rental_type,
+            rental_type,   
             listing_images ( image_url ),
             users:owner_id ( id, full_name, avatar_url )
           `
@@ -484,9 +413,83 @@ export default function LogementDetailsScreen({ route, navigation }: Props) {
             })) ?? [];
         } catch {}
 
-        /* 3 + 3bis) Calendrier (réservations + overrides) */
-        await fetchCalendar();
+        /* 3) Réservations -> indisponibles (check-in inclus -> check-out exclu) */
+      /* 3) Réservations -> indisponibles (fin EXCLUE = jour de checkout dispo) */
+/* Helpers UTC-safe (évite les décalages DST) */
+const toUTC = (iso: string) => {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, (m ?? 1) - 1, d ?? 1));
+};
+const keyUTC = (d: Date) => d.toISOString().slice(0, 10);
 
+/**
+ * Ajoute toutes les dates réservées dans into avec fin EXCLUE.
+ * - Si end <= start (ex: réservation d'1 seul jour stockée start=end),
+ *   on considère endExclusive = start + 1 jour → le jour 'start' est barré.
+ */
+const addRangeFromReservation = (
+  startISO: string,
+  endISO: string,
+  into: Record<string, true>
+) => {
+  try {
+    const start = toUTC(startISO);
+    const end = toUTC(endISO);
+
+    // calcul fin exclusive
+    const endExclusive =
+      end.getTime() <= start.getTime()
+        ? new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate() + 1))
+        : end;
+
+    for (let d = new Date(start); d < endExclusive; d.setUTCDate(d.getUTCDate() + 1)) {
+      into[keyUTC(d)] = true;
+    }
+  } catch {}
+};
+
+const { data: res } = await supabase
+  .from("reservations")
+  .select("start_date, end_date, status")
+  .eq("logement_id", id)
+  .in("status", ["confirmed", "completed"]);
+
+const disabledByResa: Record<string, true> = {};
+(res ?? []).forEach((r) => {
+  if (r.start_date && r.end_date) {
+    addRangeFromReservation(r.start_date, r.end_date, disabledByResa);
+  }
+});
+
+/* 3bis) Availability Overrides (indispo + prix) — inchangé */
+const today = new Date();
+const future = new Date();
+future.setMonth(future.getMonth() + 18);
+const todayKey = today.toISOString().slice(0, 10);
+const futureKey = future.toISOString().slice(0, 10);
+
+const { data: ov } = await supabase
+  .from("availability_overrides")
+  .select("date, is_available, price")
+  .eq("listing_type", "logement")
+  .eq("listing_id", id)
+  .gte("date", todayKey)
+  .lte("date", futureKey);
+
+const ovPrices: Record<string, number> = {};
+const ovDisabled: Record<string, true> = {};
+(ov ?? []).forEach((r: any) => {
+  const k = r.date; // 'YYYY-MM-DD'
+  if (r.is_available === false) ovDisabled[k] = true;
+  if (r.price != null) ovPrices[k] = Number(r.price);
+});
+
+// Final : indispo = réservations + overrides non dispo
+const combinedDisabled: Record<string, true> = { ...disabledByResa, ...ovDisabled };
+
+setOverridePrices(ovPrices);
+setOverrideUnavailable(ovDisabled);
+setUnavailable(combinedDisabled);
         /* 4) Add-ons */
         let addOnsFetched: {
           id: string;
@@ -579,6 +582,9 @@ export default function LogementDetailsScreen({ route, navigation }: Props) {
           });
           setEquipements(eq);
           setReviews(revs);
+          setOverridePrices(ovPrices);
+          setOverrideUnavailable(ovDisabled);
+          setUnavailable(combinedDisabled);
           setAddOns(addOnsFetched);
         }
       } catch (e) {
@@ -595,52 +601,8 @@ export default function LogementDetailsScreen({ route, navigation }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [id, fetchCalendar]);
-
-  /* ===== Realtime calendrier (reservations + availability_overrides) ===== */
-  useEffect(() => {
-    // nettoie éventuel ancien canal
-    if (channelRef.current) {
-      supabase.removeChannel(channelRef.current);
-      channelRef.current = null;
-    }
-
-    const handleCalendarChange = () => {
-      // refresh léger (pas de spinner)
-      fetchCalendarRef.current?.();
-    };
-
-    const ch = supabase
-      .channel(`logement-cal-rt-${id}`)
-      // Réservations de ce logement
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "reservations", filter: `logement_id=eq.${id}` },
-        handleCalendarChange
-      )
-      // Overrides de dispo/prix pour ce logement
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "availability_overrides",
-          filter: `listing_id=eq.${id}`,
-        },
-        handleCalendarChange
-      )
-      .subscribe();
-
-    channelRef.current = ch;
-    return () => {
-      if (channelRef.current) {
-        supabase.removeChannel(channelRef.current);
-        channelRef.current = null;
-      }
-    };
   }, [id]);
 
-  /* ====== Mémo UI ====== */
   const locationText = useMemo(() => {
     if (!data) return "";
     return data.quartier ? `${data.city}, ${data.quartier}` : data.city;
@@ -655,78 +617,101 @@ export default function LogementDetailsScreen({ route, navigation }: Props) {
     return t;
   }, [data?.rental_type]);
 
-  /* ===== Sélection de dates ===== */
-  const isPastKey = useCallback((key: string) => {
-    const todayKey = new Date().toISOString().slice(0, 10);
-    return key < todayKey;
-  }, []);
+  if (loading || !data) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color="#000" />
+      </View>
+    );
+  }
 
-  const onDayPress = useCallback(
-    (day: DateData) => {
-      const d = day.dateString;
-      if (unavailable[d] || isPastKey(d)) return;
+  const imageCount = data.images.length;
+  const toggle = (rid: string) => setExpanded((m) => ({ ...m, [rid]: !m[rid] }));
 
-      if (!startDate || (startDate && endDate)) {
-        setStartDate(d);
-        setEndDate(null);
-        setDayPriceOverride(overridePrices[d] ?? null);
-        return;
-      }
+  /* ===== Calendrier helpers ===== */
+  const toKey = (d: Date) => d.toISOString().slice(0, 10);
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const isPastKey = (key: string) => key < todayKey;
 
-      if (startDate && !endDate) {
-        if (d < startDate) {
-          setStartDate(d);
-          setDayPriceOverride(overridePrices[d] ?? null);
-        } else {
-          setEndDate(d);
-        }
-      }
-    },
-    [unavailable, isPastKey, startDate, endDate, overridePrices]
-  );
+  // Sélectionne 1 seul jour ; applique le prix override du jour si présent
+  // === Sélection de dates ===
+const onDayPress = (day: DateData) => {
+  const d = day.dateString;
+  if (unavailable[d] || isPastKey(d)) return;
 
-  const markedDates = useMemo(() => {
-    const md: Record<
-      string,
-      {
-        color?: string;
-        textColor?: string;
-        startingDay?: boolean;
-        endingDay?: boolean;
-        disabled?: boolean;
-        disableTouchEvent?: boolean;
-      }
-    > = {};
+  // Aucun start -> on initialise
+  if (!startDate || (startDate && endDate)) {
+    setStartDate(d);
+    setEndDate(null);
+    setDayPriceOverride(overridePrices[d] ?? null);
+    return;
+  }
 
-    // Jours indispos
-    Object.keys(unavailable).forEach((k) => {
-      md[k] = { ...(md[k] || {}), disabled: true, disableTouchEvent: true };
-    });
+  // Si start existe mais pas encore end
+  if (startDate && !endDate) {
+    if (d < startDate) {
+      // si l'utilisateur clique avant le start, on redéfinit start
+      setStartDate(d);
+      setDayPriceOverride(overridePrices[d] ?? null);
+    } else {
+      // sinon on définit la plage
+      setEndDate(d);
+    }
+  }
+};
 
-    // Plage
-    if (startDate && endDate) {
-      let cur = new Date(startDate);
-      const end = new Date(endDate);
+// === Marquage des dates ===
+const markedDates = () => {
+  const md: Record<
+    string,
+    {
+      color?: string;
+      textColor?: string;
+      startingDay?: boolean;
+      endingDay?: boolean;
+      disabled?: boolean;
+      disableTouchEvent?: boolean;
+    }
+  > = {};
 
-      while (cur <= end) {
-        const key = cur.toISOString().slice(0, 10);
-        md[key] = { ...(md[key] || {}), color: "#111", textColor: "#fff" };
-        cur.setDate(cur.getDate() + 1);
-      }
-      md[startDate] = { ...(md[startDate] || {}), startingDay: true, color: "#111", textColor: "#fff" };
-      md[endDate] = { ...(md[endDate] || {}), endingDay: true, color: "#111", textColor: "#fff" };
-    } else if (startDate) {
-      md[startDate] = {
-        ...(md[startDate] || {}),
-        startingDay: true,
-        endingDay: true,
+  // Jours indispos
+  Object.keys(unavailable).forEach((k) => {
+    md[k] = { ...(md[k] || {}), disabled: true, disableTouchEvent: true };
+  });
+
+  // Si plage complète
+  if (startDate && endDate) {
+    let cur = new Date(startDate);
+    const end = new Date(endDate);
+
+    while (cur <= end) {
+      const key = toKey(cur);
+      md[key] = {
+        ...(md[key] || {}),
         color: "#111",
         textColor: "#fff",
       };
+      cur.setDate(cur.getDate() + 1);
     }
 
-    return md;
-  }, [unavailable, startDate, endDate]);
+    md[startDate] = { ...(md[startDate] || {}), startingDay: true, color: "#111", textColor: "#fff" };
+    md[endDate] = { ...(md[endDate] || {}), endingDay: true, color: "#111", textColor: "#fff" };
+  }
+
+  // Si seulement start sélectionné
+  else if (startDate) {
+    md[startDate] = {
+      ...(md[startDate] || {}),
+      startingDay: true,
+      endingDay: true,
+      color: "#111",
+      textColor: "#fff",
+    };
+  }
+
+  return md;
+};
+
 
   const resetDates = () => {
     setStartDate(null);
@@ -735,48 +720,62 @@ export default function LogementDetailsScreen({ route, navigation }: Props) {
   };
 
   /* ========= NAVIGATION CHECKOUT ========= */
+
   const openCalendar = () => {
     setCalOpen(true);
   };
 
-  const proceedToCheckout = (s?: string, e?: string) => {
-    if (!data) return;
-    const start = s ?? startDate;
-    const end = e ?? endDate ?? startDate;
-    if (!start || !end) return;
+  // Navigation vers Checkout (appelée depuis "Suivant")
+  // ⬇ Remplace ta version de proceedToCheckout par celle-ci
+const proceedToCheckout = (s?: string, e?: string) => {
+  if (!data) return;
 
-    const draft = {
-      logementId: data.id,
-      startDate: start,
-      endDate: end,
-      unitPrice: effectiveUnit,
-      addOns,
-      selectedAddOnIds: selectedAddOns,
-      guests: 1,
-      currency: "XOF" as const,
-    };
+  // On utilise ce qui est passé, sinon l’état, et on retombe
+  // sur startDate si end est absent (cas “un seul jour”)
+  const start = s ?? startDate;
+  const end = e ?? endDate ?? startDate;
 
-    navigation.navigate("Checkout", { draft, step: 1 });
+  if (!start || !end) return;
+
+  const draft = {
+    logementId: data.id,
+    startDate: start,
+    endDate: end,
+    unitPrice: effectiveUnit,         // prix jour > négocié > base
+    addOns,
+    selectedAddOnIds: selectedAddOns,
+    guests: 1,
+    currency: "XOF" as const,
   };
 
-  const onValidateDates = async () => {
-    if (!startDate) return;
-    const s = startDate;
-    const e = endDate ?? startDate;
-    setEndDate(e);
-    setCalOpen(false);
+  navigation.navigate("Checkout", { draft, step: 1 });
+};
 
-    const { data: authData } = await supabase.auth.getSession();
-    const sess = authData?.session ?? null;
-    if (!sess) {
-      navigation.navigate("AuthSheet");
-      return;
-    }
-    proceedToCheckout(s, e);
-  };
+// ⬇ Remplace ta version de onValidateDates par celle-ci
+const onValidateDates = async () => {
+  if (!startDate) return;
 
-  /* ===== Composant jour (mémo) ===== */
-  const Day = React.memo(function DayComp({
+  // Si l’utilisateur n’a choisi qu’un seul jour, on prend start = end
+  const s = startDate;
+  const e = endDate ?? startDate;
+
+  // On peut mettre l’état pour l’UI, mais on ne s’en sert pas pour naviguer
+  setEndDate(e);
+  setCalOpen(false);
+
+  const { data: authData } = await supabase.auth.getSession();
+  const sess = authData?.session ?? null;
+  if (!sess) {
+    navigation.navigate("AuthSheet");
+    return;
+  }
+
+  // ✅ Navigue avec la plage calculée localement (pas dépendant du setState)
+  proceedToCheckout(s, e);
+};
+
+
+  const Day = ({
     date,
     state,
     marking,
@@ -786,7 +785,7 @@ export default function LogementDetailsScreen({ route, navigation }: Props) {
     state: "selected" | "disabled" | "";
     marking?: any;
     onPress: () => void;
-  }) {
+  }) => {
     const key = date.dateString;
     const disabled =
       isPastKey(key) || unavailable[key] || marking?.disabled || state === "disabled";
@@ -822,48 +821,7 @@ export default function LogementDetailsScreen({ route, navigation }: Props) {
         </Text>
       </TouchableOpacity>
     );
-  });
-
-  /* ===== Carousel helpers perf ===== */
-  const renderSlide = useCallback(
-    ({ item, index: idx }: { item: string; index: number }) => {
-      const isFirst = idx === 0;
-      const src: FISource = item
-        ? {
-            uri: item,
-            priority: isFirst ? FastImage.priority.high : FastImage.priority.normal,
-            cache: FastImage.cacheControl.immutable,
-          }
-        : require("../../assets/images/logement.jpg");
-
-      return (
-        <FastImage
-          source={src}
-          style={{ width: SCREEN_W, height: BANNER_H }}
-          resizeMode={FastImage.resizeMode.cover}
-        />
-      );
-    },
-    []
-  );
-
-  const keySlide = useCallback((uri: string, i: number) => `${uri}-${i}`, []);
-  const getItemLayout = useCallback(
-    (_: any, i: number) => ({ length: SCREEN_W, offset: SCREEN_W * i, index: i }),
-    []
-  );
-
-  /* ====== Render ====== */
-  if (loading || !data) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color="#000" />
-      </View>
-    );
-  }
-
-  const imageCount = data.images.length;
-  const toggle = (rid: string) => setExpanded((m) => ({ ...m, [rid]: !m[rid] }));
+  };
 
   return (
     <View style={styles.root}>
@@ -871,18 +829,23 @@ export default function LogementDetailsScreen({ route, navigation }: Props) {
       <View style={styles.banner}>
         <FlatList
           data={data.images}
-          keyExtractor={keySlide}
+          keyExtractor={(uri, i) => `${uri}-${i}`}
           horizontal
           pagingEnabled
           showsHorizontalScrollIndicator={false}
-          renderItem={renderSlide}
+          renderItem={({ item }) => (
+            <Image
+              source={
+                item
+                  ? { uri: item }
+                  : require("../../assets/images/logement.jpg")
+              }
+              style={{ width: SCREEN_W, height: BANNER_H }}
+              resizeMode="cover"
+            />
+          )}
           onViewableItemsChanged={onViewableItemsChanged.current}
           viewabilityConfig={viewConfigRef.current}
-          initialNumToRender={1}
-          maxToRenderPerBatch={2}
-          windowSize={3}
-          removeClippedSubviews
-          getItemLayout={getItemLayout}
         />
 
         {imageCount > 1 && (
@@ -1048,18 +1011,13 @@ export default function LogementDetailsScreen({ route, navigation }: Props) {
               >
                 <View style={styles.hostCard}>
                   <View style={styles.hostRow}>
-                    <FastImage
+                    <Image
                       source={
                         data.owner.avatar_url
-                          ? ({
-                              uri: data.owner.avatar_url,
-                              priority: FastImage.priority.normal,
-                              cache: FastImage.cacheControl.immutable,
-                            } as FISource)
-                          : (require("../../assets/images/logement.jpg") as FISource)
+                          ? { uri: data.owner.avatar_url }
+                          : require("../../assets/images/logement.jpg")
                       }
                       style={styles.hostAvatar}
-                      resizeMode={FastImage.resizeMode.cover}
                     />
                     <View style={{ flex: 1 }}>
                       <Text style={styles.hostNameBig}>
@@ -1154,18 +1112,13 @@ export default function LogementDetailsScreen({ route, navigation }: Props) {
                 return (
                   <View key={rv.id} style={styles.reviewTile}>
                     <View style={styles.reviewHeader}>
-                      <FastImage
+                      <Image
                         source={
                           rv.reviewer?.avatar_url
-                            ? ({
-                                uri: rv.reviewer.avatar_url,
-                                priority: FastImage.priority.normal,
-                                cache: FastImage.cacheControl.immutable,
-                              } as FISource)
-                            : (require("../../assets/images/logement.jpg") as FISource)
+                            ? { uri: rv.reviewer.avatar_url }
+                            : require("../../assets/images/logement.jpg")
                         }
                         style={styles.reviewAvatar}
-                        resizeMode={FastImage.resizeMode.cover}
                       />
                       <View style={{ flex: 1 }}>
                         <Text style={styles.reviewName}>
@@ -1357,10 +1310,10 @@ export default function LogementDetailsScreen({ route, navigation }: Props) {
                   pastScrollRange={0}
                   futureScrollRange={12}
                   onDayPress={onDayPress}
-                  markedDates={markedDates}
+                  markedDates={markedDates()}
                   markingType="period"
                   firstDay={1}
-                  minDate={new Date().toISOString().slice(0, 10)}
+                  minDate={todayKey}
                   disableAllTouchEventsForDisabledDays
                   theme={{
                     arrowColor: "#111",
@@ -1393,21 +1346,22 @@ export default function LogementDetailsScreen({ route, navigation }: Props) {
               <TouchableOpacity onPress={resetDates} activeOpacity={0.8}>
                 <Text style={styles.resetLink}>Réinitialiser</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.nextBtn,
-                  (!(startDate) || savingReservation) && { opacity: 0.4 },
-                ]}
-                disabled={!(startDate) || savingReservation}
-                onPress={onValidateDates}
-                activeOpacity={0.9}
-              >
-                {savingReservation ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.nextBtnText}>Suivant</Text>
-                )}
-              </TouchableOpacity>
+             <TouchableOpacity
+  style={[
+    styles.nextBtn,
+    (!(startDate) || savingReservation) && { opacity: 0.4 },
+  ]}
+  disabled={!(startDate) || savingReservation}
+  onPress={onValidateDates}
+  activeOpacity={0.9}
+>
+  {savingReservation ? (
+    <ActivityIndicator color="#fff" />
+  ) : (
+    <Text style={styles.nextBtnText}>Suivant</Text>
+  )}
+</TouchableOpacity>
+
             </View>
           </View>
         </View>

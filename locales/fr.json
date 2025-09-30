@@ -1,0 +1,15 @@
+{
+  "NSPhotoLibraryUsageDescription": "Flexii a besoin d’accéder à votre photothèque pour ajouter des photos à vos annonces (ex. images du logement ou véhicule). Sans cet accès, vous ne pourrez pas sélectionner des images existantes pour publier votre annonce.",
+  "NSPhotoLibraryAddUsageDescription": "Flexii peut enregistrer des images (ex. reçus de réservation, exports PDF ou photos retouchées) dans votre photothèque, à votre demande.",
+  "NSCameraUsageDescription": "Flexii utilise la caméra pour prendre des photos de votre logement ou véhicule à publier dans une annonce.",
+  "NSLocationWhenInUseUsageDescription": "Flexii utilise votre position pour améliorer la recherche par proximité (ex. annonces près de vous). Aucun suivi en arrière-plan.",
+
+  "App_Store_Screenshots_Note": "Chargez des captures réelles prises sur iPad (ex. iPad Pro 13”) montrant les fonctionnalités principales (recherche, détail d’annonce, réservation, messagerie).",
+  "Support_Email": "flexii@flexiihouse.com",
+  "Privacy_Email": "privacy@flexiihouse.com",
+  "Website": "https://flexiihouse.com",
+  "Delete_Account_URL": "https://flexiihouse.com/delete-account",
+  "Licenses_URL": "https://flexiihouse.com/legal/open-source-licenses",
+  "Terms_URL": "https://flexiihouse.com/legal/terms",
+  "Privacy_URL": "https://flexiihouse.com/politique-de-confidentialite"
+}
