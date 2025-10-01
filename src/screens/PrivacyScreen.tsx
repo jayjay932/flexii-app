@@ -26,11 +26,11 @@ const DPO_MAIL = "flexii@flexiihouse.com";       // conseillé pour RGPD
 const SUPPORT_MAIL = "flexii@flexiihouse.com";
 const TEL = "+33 07 59 89 10 39";
 
-const WEBSITE = "https://flexiihouse.com";
-const PRIVACY_URL = "https://flexiihouse.com/politique-de-confidentialite";
-const TERMS_URL = "https://flexiihouse.com/legal/terms";
-const DELETE_URL = "https://flexiihouse.com/delete-account";
-const OSS_URL = "https://flexiihouse.com/legal/open-source-licenses";
+const WEBSITE = "https://www.flexiihouse.com";
+const PRIVACY_URL = "https://www.flexiihouse.com/politique-de-confidentialite";
+const TERMS_URL = "https://www.flexiihouse.com/legal/terms";
+const DELETE_URL = "https://www.flexiihouse.com/delete-account";
+const OSS_URL = "https://www.flexiihouse.com/legal/open-source-licenses";
 const EULA_APPLE = "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/"; // référence non cliquable
 
 export default function PrivacyScreen() {

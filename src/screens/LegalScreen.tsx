@@ -16,12 +16,12 @@ import { useNavigation } from "@react-navigation/native";
 const MAIL = "flexii@flexiihouse.com";
 const TEL = "+33 07 59 89 10 39";
 
-const WEBSITE = "https://flexiihouse.com";
-const TERMS_URL = "https://flexiihouse.com/legal/terms";
-const PRIVACY_URL = "https://flexiihouse.com/politique-de-confidentialite";
+const WEBSITE = "https://www.flexiihouse.com";
+const TERMS_URL = "https://www.flexiihouse.com/legal/terms";
+const PRIVACY_URL = "https://www.flexiihouse.com/politique-de-confidentialite";
 const EULA_URL_APPLE = "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/"; // EULA standard Apple
-const EULA_URL_VENDOR = "https://flexiihouse.com/legal/eula"; // EULA éditeur (optionnel)
-const OSS_URL = "https://flexiihouse.com/legal/open-source-licenses";
+const EULA_URL_VENDOR = "https://www.flexiihouse.com/legal/eula"; // EULA éditeur (optionnel)
+const OSS_URL = "https://www.flexiihouse.com/legal/open-source-licenses";
 
 export default function LegalScreen() {
   const navigation = useNavigation<any>();

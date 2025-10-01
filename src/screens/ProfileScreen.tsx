@@ -415,6 +415,13 @@ export default function ProfileScreen({ navigation }: Props) {
           {/* Liste style “réglages” */}
           <SettingsList
             items={[
+
+                {
+                icon: "settings-outline",
+                label: "suppression du compte (Delete-account)",
+                onPress: () => navigation.navigate("DeleteAccount"),
+                dot: true,
+              },
               {
                 icon: "help-circle-outline",
                 label: "Obtenir de l'aide",

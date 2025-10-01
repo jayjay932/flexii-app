@@ -25,10 +25,10 @@ const SUPPORT_NAME = "Équipe Support Flexii";
 const SUPPORT_MAIL = "flexii@flexiihouse.com";
 const PRIVACY_MAIL = "privacy@flexiihouse.com";
 const TEL = "+33 07 59 89 10 39";
-const WEBSITE = "https://flexiihouse.com";
-const STATUSPAGE = "https://flexiihouse.com/status";
-const HELP_CENTER = "https://flexiihouse.com/support";
-const DELETE_URL = "https://flexiihouse.com/delete-account";
+const WEBSITE = "https://www.flexiihouse.com";
+const STATUSPAGE = "https://www.flexiihouse.com/status";
+const HELP_CENTER = "https://www.flexiihouse.com/support";
+const DELETE_URL = "https://www.flexiihouse.com/delete-account";
 
 export default function HelpScreen() {
   const navigation = useNavigation<any>();

@@ -17,7 +17,7 @@
     "ios": {
       "supportsTablet": false,                  
       "bundleIdentifier": "com.jayjay930.Flexiii",
-      "buildNumber": "6",                           
+      "buildNumber": "7",                           
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
 
@@ -32,7 +32,7 @@
 
     "android": {
       "package": "com.flexii.mobile",
-      "versionCode": 2,
+      "versionCode": 3,
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "adaptiveIcon": {

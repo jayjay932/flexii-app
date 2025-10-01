@@ -32,6 +32,7 @@ import LegalScreen from "../screens/LegalScreen";
 import PrivacyScreen from "../screens/PrivacyScreen";
 import HelpScreen from "../screens/HelpScreen";
 import FavoritesScreen from "../screens/FavoritesScreen";
+import DeleteAccountScreen from "../screens/DeleteAccountScreen";
 
 
 // ..
@@ -58,6 +59,7 @@ export type RootStackParamList = {
   LogementsFilters: undefined;
   legal : undefined;
 help :undefined;
+DeleteAccount :undefined;
   BookingSummary: { listingId: string; acceptedPrice?: number };
   AllReviews: { listingId: string; title?: string };
 Favoris :undefined;
@@ -171,6 +173,10 @@ export default function RootNavigator() {
         component={AuthSheet}
         options={{ presentation: "modal", headerShown: false }}
       />
+
+        <Stack.Screen name="DeleteAccount" component={DeleteAccountScreen} />
+
+      
 
 <Stack.Screen name="Reservations" component={ReservationsScreen} options={{ headerShown: false }} />
 <Stack.Screen name="ReservationDetails" component={ReservationDetailsScreen} />
