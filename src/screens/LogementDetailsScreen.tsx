@@ -16,7 +16,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons, { IconName } from '@/src/ui/Icon';;
 import { CalendarList, DateData, LocaleConfig } from "react-native-calendars";
 import { supabase } from "@/src/lib/supabase";
 import { RootStackParamList } from "../navigation/RootNavigator";
@@ -413,20 +413,12 @@ export default function LogementDetailsScreen({ route, navigation }: Props) {
             })) ?? [];
         } catch {}
 
-        /* 3) Réservations -> indisponibles (check-in inclus -> check-out exclu) */
-      /* 3) Réservations -> indisponibles (fin EXCLUE = jour de checkout dispo) */
-/* Helpers UTC-safe (évite les décalages DST) */
+        /* 3) Réservations -> indisponibles (fin EXCLUE = jour de checkout dispo) */
 const toUTC = (iso: string) => {
   const [y, m, d] = iso.split("-").map(Number);
   return new Date(Date.UTC(y, (m ?? 1) - 1, d ?? 1));
 };
 const keyUTC = (d: Date) => d.toISOString().slice(0, 10);
-
-/**
- * Ajoute toutes les dates réservées dans into avec fin EXCLUE.
- * - Si end <= start (ex: réservation d'1 seul jour stockée start=end),
- *   on considère endExclusive = start + 1 jour → le jour 'start' est barré.
- */
 const addRangeFromReservation = (
   startISO: string,
   endISO: string,
@@ -435,13 +427,10 @@ const addRangeFromReservation = (
   try {
     const start = toUTC(startISO);
     const end = toUTC(endISO);
-
-    // calcul fin exclusive
     const endExclusive =
       end.getTime() <= start.getTime()
         ? new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate() + 1))
         : end;
-
     for (let d = new Date(start); d < endExclusive; d.setUTCDate(d.getUTCDate() + 1)) {
       into[keyUTC(d)] = true;
     }
@@ -617,13 +606,20 @@ setUnavailable(combinedDisabled);
     return t;
   }, [data?.rental_type]);
 
+  // ⬇⬇⬇ MODIF MINIMALE POUR ÉVITER L'ÉCRAN NOIR ⬇⬇⬇
   if (loading || !data) {
     return (
-      <View style={styles.center}>
+      <View style={[styles.center, { backgroundColor: "#fff" }]}>
+        <Image
+          source={require("../../assets/images/flexii.png")}
+          style={{ width: 64, height: 64, marginBottom: 12 }}
+          resizeMode="contain"
+        />
         <ActivityIndicator size="large" color="#000" />
       </View>
     );
   }
+  // ⬆⬆⬆ FIN MODIF — le reste est inchangé ⬆⬆⬆
 
   const imageCount = data.images.length;
   const toggle = (rid: string) => setExpanded((m) => ({ ...m, [rid]: !m[rid] }));
@@ -634,12 +630,10 @@ setUnavailable(combinedDisabled);
   const isPastKey = (key: string) => key < todayKey;
 
   // Sélectionne 1 seul jour ; applique le prix override du jour si présent
-  // === Sélection de dates ===
 const onDayPress = (day: DateData) => {
   const d = day.dateString;
   if (unavailable[d] || isPastKey(d)) return;
 
-  // Aucun start -> on initialise
   if (!startDate || (startDate && endDate)) {
     setStartDate(d);
     setEndDate(null);
@@ -647,14 +641,11 @@ const onDayPress = (day: DateData) => {
     return;
   }
 
-  // Si start existe mais pas encore end
   if (startDate && !endDate) {
     if (d < startDate) {
-      // si l'utilisateur clique avant le start, on redéfinit start
       setStartDate(d);
       setDayPriceOverride(overridePrices[d] ?? null);
     } else {
-      // sinon on définit la plage
       setEndDate(d);
     }
   }
@@ -674,12 +665,10 @@ const markedDates = () => {
     }
   > = {};
 
-  // Jours indispos
   Object.keys(unavailable).forEach((k) => {
     md[k] = { ...(md[k] || {}), disabled: true, disableTouchEvent: true };
   });
 
-  // Si plage complète
   if (startDate && endDate) {
     let cur = new Date(startDate);
     const end = new Date(endDate);
@@ -696,10 +685,7 @@ const markedDates = () => {
 
     md[startDate] = { ...(md[startDate] || {}), startingDay: true, color: "#111", textColor: "#fff" };
     md[endDate] = { ...(md[endDate] || {}), endingDay: true, color: "#111", textColor: "#fff" };
-  }
-
-  // Si seulement start sélectionné
-  else if (startDate) {
+  } else if (startDate) {
     md[startDate] = {
       ...(md[startDate] || {}),
       startingDay: true,
@@ -725,13 +711,9 @@ const markedDates = () => {
     setCalOpen(true);
   };
 
-  // Navigation vers Checkout (appelée depuis "Suivant")
-  // ⬇ Remplace ta version de proceedToCheckout par celle-ci
 const proceedToCheckout = (s?: string, e?: string) => {
   if (!data) return;
 
-  // On utilise ce qui est passé, sinon l’état, et on retombe
-  // sur startDate si end est absent (cas “un seul jour”)
   const start = s ?? startDate;
   const end = e ?? endDate ?? startDate;
 
@@ -741,7 +723,7 @@ const proceedToCheckout = (s?: string, e?: string) => {
     logementId: data.id,
     startDate: start,
     endDate: end,
-    unitPrice: effectiveUnit,         // prix jour > négocié > base
+    unitPrice: effectiveUnit,
     addOns,
     selectedAddOnIds: selectedAddOns,
     guests: 1,
@@ -751,15 +733,12 @@ const proceedToCheckout = (s?: string, e?: string) => {
   navigation.navigate("Checkout", { draft, step: 1 });
 };
 
-// ⬇ Remplace ta version de onValidateDates par celle-ci
 const onValidateDates = async () => {
   if (!startDate) return;
 
-  // Si l’utilisateur n’a choisi qu’un seul jour, on prend start = end
   const s = startDate;
   const e = endDate ?? startDate;
 
-  // On peut mettre l’état pour l’UI, mais on ne s’en sert pas pour naviguer
   setEndDate(e);
   setCalOpen(false);
 
@@ -770,7 +749,6 @@ const onValidateDates = async () => {
     return;
   }
 
-  // ✅ Navigue avec la plage calculée localement (pas dépendant du setState)
   proceedToCheckout(s, e);
 };
 
@@ -1036,14 +1014,12 @@ const onValidateDates = async () => {
                   <View style={styles.hostInfoRow}>
                     <Ionicons name="school-outline" size={18} color="#222" />
                     <Text style={styles.hostInfoText}>
-                      L’endroit où j’ai étudié : —
-                    </Text>
+                      L’endroit où j’ai étudié : —</Text>
                   </View>
                   <View style={styles.hostInfoRow}>
                     <Ionicons name="language-outline" size={18} color="#222" />
                     <Text style={styles.hostInfoText}>
-                      Langues parlées : —
-                    </Text>
+                      Langues parlées : —</Text>
                   </View>
 
                   <View style={styles.hostDivider} />
@@ -1553,7 +1529,7 @@ const styles = StyleSheet.create({
   hostRow: { flexDirection: "row", alignItems: "center" },
   hostAvatar: { width: 72, height: 72, borderRadius: 36, marginRight: 14 },
   hostNameBig: { fontSize: 22, fontWeight: "800", color: "#111" },
-  hostRole: { fontSize: 14, color: "#6b6b6b", marginTop: 2 },
+  hostRole: { fontSize: 14, color: "#6b6b6b" },
   hostStats: { alignItems: "flex-end" },
   hostStatValue: { fontSize: 20, fontWeight: "800", color: "#111" },
   hostStatLabel: { fontSize: 12, color: "#6b6b6b" },

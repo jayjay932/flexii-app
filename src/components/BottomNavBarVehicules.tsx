@@ -1,6 +1,7 @@
+// src/components/BottomNavBarVehicules.tsx
 import React, { useEffect, useState } from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons, { IconName } from "@/src/ui/Icon";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import { supabase } from "@/src/lib/supabase";
@@ -31,11 +32,13 @@ export default function BottomNavBarVehicules({
   const GUARD: TabKey[] = ["Favoris", "Voyages", "Messages", "Profil"];
 
   const [stateAuthed, setStateAuthed] = useState(false);
+
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getSession();
       setStateAuthed(!!data.session);
     })();
+
     const { data: sub } = supabase.auth.onAuthStateChange((_evt, sess: Session | null) => {
       setStateAuthed(!!sess);
     });
@@ -52,7 +55,7 @@ export default function BottomNavBarVehicules({
   }: {
     k: TabKey;
     label: string;
-    icon: keyof typeof Ionicons.glyphMap;
+    icon: IconName; // ✅ plus de glyphMap ici
     badgeContent?: number | string | null;
   }) => {
     const active = current === k;
@@ -105,9 +108,14 @@ export default function BottomNavBarVehicules({
       <View style={styles.bg}>
         <View style={[styles.bar, { paddingBottom: 10 + insets.bottom }]}>
           <Item k="logements" label="Explorer" icon="search" />
-          <Item k="logements" label="Favoris" icon="heart-outline" />
+          <Item k="Favoris" label="Favoris" icon="heart-outline" />
           <Item k="Voyages" label="Réservations" icon="airplane-outline" />
-          <Item k="Messages" label="Messages" icon="chatbubble-ellipses-outline" badgeContent={messagesBadge ?? null} />
+          <Item
+            k="Messages"
+            label="Messages"
+            icon="chatbubble-ellipses-outline"
+            badgeContent={messagesBadge ?? null}
+          />
           <Item k="Profil" label="Profil" icon="person-circle-outline" />
         </View>
       </View>

@@ -1,14 +1,20 @@
 // src/screens/OwnerReservationDetailsScreen.tsx
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  ActivityIndicator, Image, ImageBackground, Alert,
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import Ionicons from "react-native-vector-icons/Ionicons";
+import Ionicons from "@/src/ui/Icon";
 import { supabase } from "@/src/lib/supabase";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "@/src/navigation/RootNavigator";
+import { Image } from "expo-image";
 
 type Props = NativeStackScreenProps<RootStackParamList, "OwnerReservationDetails">;
 
@@ -20,7 +26,7 @@ type Row = {
   confirmed_at?: string | null;
   start_date: string;
   end_date: string;
-  status: string; // normalisé en runtime
+  status: string;
   total_price: number;
   currency: string | null;
 
@@ -33,16 +39,31 @@ type Row = {
   price_espece: number | string | null;
 
   user_id: string | null;
-  users?: { full_name: string | null; email: string | null; phone: string | null; avatar_url?: string | null } | null;
+  users?: {
+    full_name: string | null;
+    email: string | null;
+    phone: string | null;
+    avatar_url?: string | null;
+  } | null;
 
   listings_logements?: {
-    title: string; city: string; quartier?: string | null; adresse?: string | null;
+    title: string;
+    city: string;
+    quartier?: string | null;
+    adresse?: string | null;
     listing_images?: ListingPics;
   } | null;
   listings_vehicules?: {
-    marque: string; modele: string; city: string | null; listing_images?: ListingPics;
+    marque: string;
+    modele: string;
+    city: string | null;
+    listing_images?: ListingPics;
   } | null;
-  listings_experiences?: { title: string; city: string | null; listing_images?: ListingPics } | null;
+  listings_experiences?: {
+    title: string;
+    city: string | null;
+    listing_images?: ListingPics;
+  } | null;
 };
 
 type Txn = {
@@ -54,7 +75,9 @@ type Txn = {
 };
 
 const money = (n: number, cur = "XOF") =>
-  new Intl.NumberFormat("fr-FR", { style: "currency", currency: cur as any }).format(Number(n || 0));
+  new Intl.NumberFormat("fr-FR", { style: "currency", currency: cur as any }).format(
+    Number(n || 0)
+  );
 
 const fmtShort = (iso: string) =>
   new Date(iso).toLocaleDateString("fr-FR", { day: "2-digit", month: "short" });
@@ -82,12 +105,24 @@ export default function OwnerReservationDetailsScreen({ route, navigation }: Pro
   const [loading, setLoading] = useState(true);
   const [mutating, setMutating] = useState(false);
 
-  const fetchData = async () => {
-    try {
-      setLoading(true);
-      const { data, error } = await supabase
-        .from("reservations")
-        .select(`
+  // anti race-condition
+  const reqSeq = useRef(0);
+  // debounce coalescé pour le realtime
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debounced = useCallback((fn: () => void, delay = 200) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(fn, delay);
+  }, []);
+
+  const fetchData = useCallback(
+    async (silent = false) => {
+      const ticket = ++reqSeq.current;
+      if (!silent) setLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from("reservations")
+          .select(
+            `
           id, created_at, confirmed_at, start_date, end_date, status, total_price, currency,
           logement_id, vehicule_id, experience_id, reservation_code,
           espece_confirmation, price_espece, user_id,
@@ -95,85 +130,130 @@ export default function OwnerReservationDetailsScreen({ route, navigation }: Pro
           listings_logements:logement_id ( title, city, quartier, adresse:adresse, listing_images ( image_url ) ),
           listings_vehicules:vehicule_id ( marque, modele, city, listing_images ( image_url ) ),
           listings_experiences:experience_id ( title, city, listing_images ( image_url ) )
-        `)
-        .eq("id", id)
-        .maybeSingle<Row>();
-      if (error) throw error;
-      setRow(data ?? null);
+        `
+          )
+          .eq("id", id)
+          .maybeSingle<Row>();
 
-      const txnq = await supabase
-        .from("transactions")
-        .select("id, status, amount, created_at, payment_method")
-        .eq("reservation_id", id)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle<Txn>();
-      if (txnq.error && (txnq as any).error?.code !== "PGRST116") throw txnq.error;
-      setTxn(txnq.data ?? null);
-    } catch (e) {
-      console.error(e);
-      Alert.alert("Erreur", "Impossible de charger la réservation.");
-    } finally {
-      setLoading(false);
-    }
-  };
+        if (error) throw error;
+        if (ticket === reqSeq.current) setRow(data ?? null);
+
+        const txnq = await supabase
+          .from("transactions")
+          .select("id, status, amount, created_at, payment_method")
+          .eq("reservation_id", id)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle<Txn>();
+
+        if (txnq.error && (txnq as any).error?.code !== "PGRST116") throw txnq.error;
+        if (ticket === reqSeq.current) setTxn(txnq.data ?? null);
+      } catch (e) {
+        console.error(e);
+        Alert.alert("Erreur", "Impossible de charger la réservation.");
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [id]
+  );
 
   useEffect(() => {
     fetchData();
+
+    const offFocus = navigation.addListener("focus", () => fetchData(true));
+
+    // Realtime ciblé + debounce
     const ch = supabase
-      .channel("owner-res-details-rt")
-      .on("postgres_changes", { event: "*", schema: "public", table: "reservations", filter: `id=eq.${id}` }, fetchData)
-      .on("postgres_changes", { event: "*", schema: "public", table: "transactions", filter: `reservation_id=eq.${id}` }, fetchData)
+      .channel(`owner-res-details-rt-${id}`, { config: { broadcast: { ack: false } } })
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "reservations", filter: `id=eq.${id}` },
+        (payload) => {
+          const r = payload.new as Partial<Row> & { id: string };
+          setRow((prev) =>
+            prev && prev.id === r.id
+              ? {
+                  ...prev,
+                  status: (r.status as any) ?? prev.status,
+                  confirmed_at: (r.confirmed_at as any) ?? prev.confirmed_at,
+                  espece_confirmation:
+                    typeof (r as any).espece_confirmation === "boolean"
+                      ? (r as any).espece_confirmation
+                      : prev.espece_confirmation,
+                  price_espece:
+                    typeof (r as any).price_espece !== "undefined"
+                      ? (r as any).price_espece
+                      : prev.price_espece,
+                }
+              : prev
+          );
+          debounced(() => fetchData(true), 180);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "transactions", filter: `reservation_id=eq.${id}` },
+        () => debounced(() => fetchData(true), 180)
+      )
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [id]);
+
+    return () => {
+      offFocus();
+      supabase.removeChannel(ch);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [fetchData, debounced, id, navigation]);
 
   const cur = row?.currency ?? "XOF";
   const kind = row?.logement_id ? "logement" : row?.vehicule_id ? "vehicule" : "experience";
-  const pics =
+
+  const pics: ListingPics | undefined =
     kind === "logement"
-      ? row?.listings_logements?.listing_images
+      ? row?.listings_logements?.listing_images ?? undefined
       : kind === "vehicule"
-      ? row?.listings_vehicules?.listing_images
-      : row?.listings_experiences?.listing_images;
-  const cover = pics?.[0]?.image_url || undefined;
+      ? row?.listings_vehicules?.listing_images ?? undefined
+      : row?.listings_experiences?.listing_images ?? undefined;
+
+  const cover = useMemo(() => pics?.[0]?.image_url || undefined, [pics]);
 
   const title =
     kind === "vehicule"
-      ? `${row?.listings_vehicules?.marque ?? ""} ${row?.listings_vehicules?.modele ?? ""}`.trim() || "Véhicule"
-      : (kind === "logement" ? row?.listings_logements?.title : row?.listings_experiences?.title) || "Annonce";
+      ? `${row?.listings_vehicules?.marque ?? ""} ${row?.listings_vehicules?.modele ?? ""}`.trim() ||
+        "Véhicule"
+      : (kind === "logement"
+          ? row?.listings_logements?.title
+          : row?.listings_experiences?.title) || "Annonce";
 
   const city =
-    (kind === "logement" ? row?.listings_logements?.city :
-     kind === "vehicule" ? row?.listings_vehicules?.city :
-     row?.listings_experiences?.city) || "—";
+    (kind === "logement"
+      ? row?.listings_logements?.city
+      : kind === "vehicule"
+      ? row?.listings_vehicules?.city
+      : row?.listings_experiences?.city) || "—";
 
   // ===== Conditions =====
   const statusNorm = (row?.status || "").toLowerCase().trim();
   const isConfirmed = statusNorm === "confirmed" || statusNorm === "completed";
   const txnPaid = txn?.status === "paid";
 
-  // montant espèces dû (coerce -> number)
   const priceEspece = Number(row?.price_espece || 0);
   const cashDue = priceEspece > 0;
 
-  // Coordonnées visibles si confirmé + txn paid (règle business)
+  // Coordonnées visibles si confirmé + txn paid
   const showClientInfo = !!row && isConfirmed && txnPaid;
 
-  // Fenêtre d’annulation (historique) : 24h après confirmation (fallback created_at)
+  // Fenêtre d’annulation informative (24h après confirmation/creation)
   const baseISO = row?.confirmed_at ?? row?.created_at;
   const cancelDeadlineISO = baseISO
     ? new Date(new Date(baseISO).getTime() + 24 * 3600 * 1000).toISOString()
     : undefined;
   const { h, m, s, done } = useCountdown(cancelDeadlineISO);
+  const showCountdown = !!baseISO && !done;
 
   // 🔑 Boutons
   const canConfirmReservation = statusNorm === "pending";
-
-  // 👉 confirmé + pas déjà confirmé en espèces (indépendant de txnPaid)
   const canConfirmCash = isConfirmed && !row?.espece_confirmation;
-
-  // ✅ Annulation toujours possible (exigence)
   const canCancel = true;
 
   const onConfirmReservation = async () => {
@@ -185,7 +265,7 @@ export default function OwnerReservationDetailsScreen({ route, navigation }: Pro
         .update({ status: "confirmed", confirmed_at: new Date().toISOString() })
         .eq("id", row.id);
       if (error) throw error;
-      await fetchData();
+      await fetchData(true);
       Alert.alert("Réservation confirmée");
     } catch (e) {
       console.error(e);
@@ -195,12 +275,11 @@ export default function OwnerReservationDetailsScreen({ route, navigation }: Pro
     }
   };
 
-  // ✅ Ne fait qu'une chose: passer espece_confirmation = true
   const onConfirmCash = async () => {
     if (!row) return;
     Alert.alert(
       "Confirmer paiement en espèces",
-      "Cette action marque uniquement l'espèce comme confirmée (ne change pas la transaction).",
+      "Cette action marque uniquement l'espèce comme confirmée.",
       [
         { text: "Annuler", style: "cancel" },
         {
@@ -214,7 +293,7 @@ export default function OwnerReservationDetailsScreen({ route, navigation }: Pro
                 .update({ espece_confirmation: true })
                 .eq("id", row.id);
               if (error) throw error;
-              await fetchData();
+              await fetchData(true);
               Alert.alert("Paiement (espèces) confirmé ✓");
             } catch (e) {
               console.error(e);
@@ -229,7 +308,7 @@ export default function OwnerReservationDetailsScreen({ route, navigation }: Pro
   };
 
   const onCancel = async () => {
-    if (!row) return; // bouton toujours actif → on ne bloque plus ici
+    if (!row) return;
     Alert.alert("Annuler la réservation ?", "Cette action est définitive.", [
       { text: "Non", style: "cancel" },
       {
@@ -243,7 +322,7 @@ export default function OwnerReservationDetailsScreen({ route, navigation }: Pro
               .update({ status: "cancelled" })
               .eq("id", row.id);
             if (error) throw error;
-            await fetchData();
+            await fetchData(true);
             Alert.alert("Réservation annulée");
           } catch (e) {
             console.error(e);
@@ -265,22 +344,23 @@ export default function OwnerReservationDetailsScreen({ route, navigation }: Pro
   }
 
   const statusLabel =
-    statusNorm === "confirmed" ? "Confirmée"
-    : statusNorm === "pending" ? "En attente"
-    : statusNorm === "cancelled" ? "Annulée"
-    : "Terminée";
+    statusNorm === "confirmed"
+      ? "Confirmée"
+      : statusNorm === "pending"
+      ? "En attente"
+      : statusNorm === "cancelled"
+      ? "Annulée"
+      : "Terminée";
 
   const code = row.reservation_code || row.id.slice(0, 8).toUpperCase();
 
-  // Affichage paiement (sans mention "annulation indisponible")
   const paymentLabel = txnPaid
-    ? (cashDue && !row.espece_confirmation ? "Payé (in-app) · espèces à confirmer" : "Payé")
+    ? cashDue && !row.espece_confirmation
+      ? "Payé (in-app) · espèces à confirmer"
+      : "Payé"
     : row.espece_confirmation
     ? "Espèces confirmées"
-    : (txn?.status ?? "—");
-
-  // Le chrono reste informatif uniquement
-  const showCountdown = !!baseISO && !done;
+    : txn?.status ?? "—";
 
   return (
     <View style={styles.root}>
@@ -296,12 +376,18 @@ export default function OwnerReservationDetailsScreen({ route, navigation }: Pro
         <ScrollView contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
           <View style={styles.topCard}>
             <Text style={styles.title}>{title}</Text>
-            <Text style={styles.sub}>{fmtShort(row.start_date)} – {fmtShort(row.end_date)}</Text>
+            <Text style={styles.sub}>
+              {fmtShort(row.start_date)} – {fmtShort(row.end_date)}
+            </Text>
 
             {/* Statuts */}
             <View style={styles.pillRow}>
-              <View style={styles.pill}><Text style={styles.pillTxt}>{statusLabel}</Text></View>
-              <View style={styles.pill}><Text style={styles.pillTxt}>Paiement : {paymentLabel}</Text></View>
+              <View style={styles.pill}>
+                <Text style={styles.pillTxt}>{statusLabel}</Text>
+              </View>
+              <View style={styles.pill}>
+                <Text style={styles.pillTxt}>Paiement : {paymentLabel}</Text>
+              </View>
             </View>
 
             {/* Code de réservation */}
@@ -313,11 +399,18 @@ export default function OwnerReservationDetailsScreen({ route, navigation }: Pro
               </View>
             </View>
 
-            {cover ? (
-              <ImageBackground source={{ uri: cover }} style={styles.hero} imageStyle={{ borderRadius: 14 }} />
-            ) : (
-              <View style={[styles.hero, { backgroundColor: "#efefef" }]} />
-            )}
+            {/* Image de couverture */}
+            <Image
+              source={
+                cover ? { uri: cover } : require("../../assets/images/logement.jpg")
+              }
+              style={styles.hero}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              allowDownscaling
+              transition={140}
+              placeholder={require("../../assets/images/flexii.png")}
+            />
           </View>
 
           {/* Client */}
@@ -331,23 +424,34 @@ export default function OwnerReservationDetailsScreen({ route, navigation }: Pro
                     : require("../../assets/images/logement.jpg")
                 }
                 style={styles.clientAvatar}
+                contentFit="cover"
+                cachePolicy="memory-disk"
+                allowDownscaling
+                transition={120}
+                placeholder={require("../../assets/images/flexii.png")}
               />
               <View style={{ flex: 1 }}>
                 <Text style={styles.clientName}>{row.users?.full_name ?? "—"}</Text>
+
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 }}>
                   <Ionicons name="mail-outline" size={16} color="#666" />
                   {showClientInfo ? (
                     <Text style={styles.contactTxt}>{row.users?.email ?? "—"}</Text>
                   ) : (
-                    <View style={styles.blurBox}><Text style={styles.blurTxt}>Email visible après confirmation & paiement</Text></View>
+                    <View style={styles.blurBox}>
+                      <Text style={styles.blurTxt}>Email visible après confirmation & paiement</Text>
+                    </View>
                   )}
                 </View>
+
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 }}>
                   <Ionicons name="call-outline" size={16} color="#666" />
                   {showClientInfo ? (
                     <Text style={styles.contactTxt}>{row.users?.phone ?? "—"}</Text>
                   ) : (
-                    <View style={styles.blurBox}><Text style={styles.blurTxt}>Téléphone visible après confirmation & paiement</Text></View>
+                    <View style={styles.blurBox}>
+                      <Text style={styles.blurTxt}>Téléphone visible après confirmation & paiement</Text>
+                    </View>
                   )}
                 </View>
               </View>
@@ -419,19 +523,48 @@ export default function OwnerReservationDetailsScreen({ route, navigation }: Pro
 }
 
 const R = 18;
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#fff" },
   safe: { flex: 1 },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
 
-  headerRow: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 6, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  roundBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: "rgba(0,0,0,0.06)", alignItems: "center", justifyContent: "center" },
+  headerRow: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  roundBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(0,0,0,0.06)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   headerCity: { fontSize: 24, fontWeight: "900", color: "#111" },
 
-  topCard: { marginHorizontal: 16, marginTop: 8, backgroundColor: "#fff", borderRadius: R, padding: 16, borderWidth: 1, borderColor: "rgba(0,0,0,0.06)", shadowColor: "#000", shadowOpacity: 0.06, shadowOffset: { width: 0, height: 6 }, shadowRadius: 12, elevation: 3 },
+  topCard: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    backgroundColor: "#fff",
+    borderRadius: R,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.06)",
+    shadowColor: "#000",
+    shadowOpacity: 0.06,
+    shadowOffset: { width: 0, height: 6 },
+    shadowRadius: 12,
+    elevation: 3,
+  },
   title: { fontSize: 22, fontWeight: "900", color: "#111" },
   sub: { color: "#666", fontWeight: "700", marginTop: 4 },
-  hero: { height: 140, borderRadius: 14, marginTop: 12 },
+
+  hero: { height: 140, borderRadius: 14, marginTop: 12, width: "100%" },
 
   pillRow: { flexDirection: "row", gap: 8, marginTop: 8, flexWrap: "wrap" },
   pill: { backgroundColor: "rgba(0,0,0,0.08)", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999 },
@@ -442,38 +575,89 @@ const styles = StyleSheet.create({
   codePill: { marginLeft: "auto", backgroundColor: "#111", borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 },
   codeTxt: { color: "#fff", fontWeight: "900", letterSpacing: 1.2 },
 
-  clientCard: { marginTop: 10, marginHorizontal: 16, backgroundColor: "#fff", borderRadius: R, padding: 14, borderWidth: 1, borderColor: "rgba(0,0,0,0.06)", shadowColor: "#000", shadowOpacity: 0.05, shadowOffset: { width: 0, height: 6 }, shadowRadius: 12, elevation: 2 },
+  clientCard: {
+    marginTop: 10,
+    marginHorizontal: 16,
+    backgroundColor: "#fff",
+    borderRadius: R,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.06)",
+    shadowColor: "#000",
+    shadowOpacity: 0.05,
+    shadowOffset: { width: 0, height: 6 },
+    shadowRadius: 12,
+    elevation: 2,
+  },
   sectionTitle: { fontWeight: "900", color: "#111", fontSize: 16 },
   clientAvatar: { width: 54, height: 54, borderRadius: 27, marginRight: 12, backgroundColor: "#eee" },
   clientName: { fontWeight: "900", color: "#111", fontSize: 16 },
   contactTxt: { fontWeight: "800", color: "#111" },
-  blurBox: { flex: 1, height: 22, borderRadius: 8, backgroundColor: "rgba(0,0,0,0.06)", justifyContent: "center", paddingHorizontal: 8 },
+  blurBox: {
+    flex: 1,
+    height: 22,
+    borderRadius: 8,
+    backgroundColor: "rgba(0,0,0,0.06)",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+  },
   blurTxt: { color: "#888", fontWeight: "700", fontSize: 12 },
 
   countdownPill: {
-    marginTop: 10, marginHorizontal: 16,
-    flexDirection: "row", alignItems: "center", gap: 6,
-    backgroundColor: "#fff", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 8,
-    borderWidth: 1, borderColor: "rgba(0,0,0,0.06)",
+    marginTop: 10,
+    marginHorizontal: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#fff",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.06)",
   },
   countdownLabel: { color: "#666", fontWeight: "700", fontSize: 12 },
   countdownTxt: { fontWeight: "900", color: "#111" },
 
   infoPill: {
-    marginTop: 10, marginHorizontal: 16,
-    flexDirection: "row", gap: 6, alignItems: "center",
-    backgroundColor: "#f6f6f6", borderRadius: 14, paddingHorizontal: 12, paddingVertical: 12,
+    marginTop: 10,
+    marginHorizontal: 16,
+    flexDirection: "row",
+    gap: 6,
+    alignItems: "center",
+    backgroundColor: "#f6f6f6",
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
   },
   infoPillTxt: { fontWeight: "800", color: "#555" },
 
   actionsBar: { marginTop: 12, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", gap: 10 },
-  secondaryBtn: { flex: 1, backgroundColor: "#f3f3f3", borderRadius: 14, paddingVertical: 12, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 8 },
+  secondaryBtn: {
+    flex: 1,
+    backgroundColor: "#f3f3f3",
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
   secondaryTxt: { fontWeight: "900", color: "#111" },
 
   primaryBtn: { backgroundColor: "#111", paddingHorizontal: 18, paddingVertical: 12, borderRadius: 14 },
   primaryTxt: { color: "#fff", fontWeight: "900" },
 
-  totalCard: { marginTop: 12, marginHorizontal: 16, marginBottom: 20, backgroundColor: "#fff", borderRadius: R, padding: 14, borderWidth: 1, borderColor: "rgba(0,0,0,0.06)" },
+  totalCard: {
+    marginTop: 12,
+    marginHorizontal: 16,
+    marginBottom: 20,
+    backgroundColor: "#fff",
+    borderRadius: R,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.06)",
+  },
   totalLabel: { color: "#666", fontWeight: "700" },
   totalValue: { color: "#111", fontWeight: "900", fontSize: 20, marginTop: 2 },
 });

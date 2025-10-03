@@ -4,7 +4,7 @@ import {
   ActivityIndicator, Platform
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import Ionicons from "react-native-vector-icons/Ionicons";
+import Ionicons, { IconName } from '@/src/ui/Icon';
 import { supabase } from "@/src/lib/supabase";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "@/src/navigation/RootNavigator";

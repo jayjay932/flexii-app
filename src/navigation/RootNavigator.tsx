@@ -33,6 +33,7 @@ import PrivacyScreen from "../screens/PrivacyScreen";
 import HelpScreen from "../screens/HelpScreen";
 import FavoritesScreen from "../screens/FavoritesScreen";
 import DeleteAccountScreen from "../screens/DeleteAccountScreen";
+import ForgotPasswordSheet from "../screens/ForgotPasswordSheet";
 
 
 // ..
@@ -97,6 +98,8 @@ Favoris :undefined;
     basePrice?: number | null;
     currency?: string | null;
   };
+
+  ForgotPasswordSheet: undefined;
 
   EditListing: { id: string; kind: "logement" | "vehicule" | "experience" };
   Legal: undefined;
@@ -167,6 +170,15 @@ export default function RootNavigator() {
       />
 
       <Stack.Screen name="Conversations" component={ConversationsScreen} />
+         <Stack.Screen 
+  name="ForgotPasswordSheet" 
+  component={ForgotPasswordSheet}
+  options={{
+    presentation: "modal",
+    headerShown: false,
+  }}
+/>
+      
 
       <Stack.Screen
         name="AuthSheet"

@@ -8,7 +8,7 @@ import {
   StyleProp,
   ViewStyle,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons, { IconName } from '@/src/ui/Icon';;
 
 type Props = {
   topOffset?: number;

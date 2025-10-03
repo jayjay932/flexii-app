@@ -1,5 +1,5 @@
 // src/screens/AuthSheet.tsx
-import React, { useEffect, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
   Animated,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons from "@/src/ui/Icon";
 import { supabase } from "@/src/lib/supabase";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "@/src/navigation/RootNavigator";
@@ -19,6 +19,36 @@ import type { RootStackParamList } from "@/src/navigation/RootNavigator";
 type Props = NativeStackScreenProps<RootStackParamList, "AuthSheet">;
 type Mode = "signin" | "signup";
 type ToastKind = "success" | "error" | "info";
+
+// ===== Helpers =====
+const normalizeEmail = (raw: string) =>
+  raw.trim().toLowerCase().replace(/\s+/g, "");
+const normalize = (s: string) => s.replace(/\s+/g, " ").trim();
+const isValidEmail = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+
+// Mapping d’erreurs Supabase -> message sympa
+const prettyError = (raw?: string) => {
+  const m = (raw || "").toLowerCase();
+
+  if (m.includes("invalid login credentials"))
+    return "Email ou mot de passe incorrect.";
+  if (m.includes("email not confirmed") || m.includes("email not verified"))
+    return "Votre email n’est pas encore vérifié. Ouvrez le lien reçu par email.";
+  if (
+    m.includes("user already registered") ||
+    m.includes("email already registered") ||
+    m.includes("duplicate key")
+  )
+    return "Cet email est déjà utilisé.";
+  if (m.includes("password should be at least"))
+    return "Mot de passe trop court.";
+  if (m.includes("rate limit"))
+    return "Trop de tentatives. Réessayez dans un instant.";
+  if (m.includes("unable to validate email") || m.includes("invalid format"))
+    return "Format d’adresse email invalide.";
+
+  return raw || "Une erreur est survenue.";
+};
 
 export default function AuthSheet({ navigation }: Props) {
   const [mode, setMode] = useState<Mode>("signin");
@@ -52,13 +82,6 @@ export default function AuthSheet({ navigation }: Props) {
     }, 2200);
   };
 
-  // ------- Helpers email -------
-  const normalizeEmail = (raw: string) =>
-    raw.trim().toLowerCase().replace(/\s+/g, ""); // retire espaces internes/fin/début
-
-  // Regex simple et suffisante pour la majorité des cas
-  const isValidEmail = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
-
   // ------- Validation -------
   const validate = () => {
     const e = normalizeEmail(email);
@@ -66,32 +89,16 @@ export default function AuthSheet({ navigation }: Props) {
     if (!isValidEmail(e)) return "Format d’email invalide";
     if (!pwd.trim()) return "Mot de passe requis";
     if (mode === "signup") {
-      if (!fullName.trim()) return "Nom complet requis";
+      if (!normalize(fullName)) return "Nom complet requis";
       if (!phone.trim()) return "Téléphone requis";
     }
     return null;
   };
 
-  // ------- Mapping d’erreurs Supabase -> message sympa -------
-  const prettyError = (raw?: string) => {
-    const m = (raw || "").toLowerCase();
-    if (m.includes("invalid login credentials"))
-      return "Email ou mot de passe incorrect.";
-    if (m.includes("email not confirmed") || m.includes("email not verified"))
-      return "Votre email n’est pas encore vérifié. Ouvrez le lien reçu par email.";
-    if (m.includes("user already registered"))
-      return "Cet email est déjà utilisé.";
-    if (m.includes("password should be at least"))
-      return "Mot de passe trop court.";
-    if (m.includes("rate limit"))
-      return "Trop de tentatives. Réessayez dans un instant.";
-    if (m.includes("unable to validate email") || m.includes("invalid format"))
-      return "Format d’adresse email invalide.";
-    return raw || "Une erreur est survenue.";
-  };
-
   const onSubmit = async () => {
+    if (loading) return; // anti double-tap
     setErrField(null);
+
     const v = validate();
     if (v) {
       setErrField(v);
@@ -100,13 +107,16 @@ export default function AuthSheet({ navigation }: Props) {
     }
 
     const cleanEmail = normalizeEmail(email);
+    const cleanPwd = pwd.trim();
+    const cleanFullName = normalize(fullName);
+    const cleanPhone = phone.trim();
 
     setLoading(true);
     try {
       if (mode === "signin") {
         const { error } = await supabase.auth.signInWithPassword({
           email: cleanEmail,
-          password: pwd,
+          password: cleanPwd,
         });
         if (error) throw error;
 
@@ -116,11 +126,11 @@ export default function AuthSheet({ navigation }: Props) {
         // --- SIGNUP ---
         const { data, error } = await supabase.auth.signUp({
           email: cleanEmail,
-          password: pwd,
+          password: cleanPwd,
           options: {
             data: {
-              full_name: fullName.trim(),
-              phone: phone.trim(),
+              full_name: cleanFullName,
+              phone: cleanPhone,
               avatar_url: null,
             },
             // emailRedirectTo: "https://ton-domaine/finish-signup", // si besoin
@@ -133,7 +143,7 @@ export default function AuthSheet({ navigation }: Props) {
         if (!data.session) {
           const { error: e2 } = await supabase.auth.signInWithPassword({
             email: cleanEmail,
-            password: pwd,
+            password: cleanPwd,
           });
           if (e2) {
             showToast(
@@ -159,6 +169,7 @@ export default function AuthSheet({ navigation }: Props) {
   };
 
   const toggleMode = () => {
+    if (loading) return;
     setErrField(null);
     setMode((m) => (m === "signin" ? "signup" : "signin"));
   };
@@ -233,7 +244,7 @@ export default function AuthSheet({ navigation }: Props) {
                 placeholder="Email"
                 placeholderTextColor="#c9c9c9"
                 autoCapitalize="none"
-                autoCorrect={false}              // 👈 important pour éviter espaces/auto-correct
+                autoCorrect={false}
                 keyboardType="email-address"
                 textContentType="emailAddress"
                 value={email}
@@ -282,6 +293,16 @@ export default function AuthSheet({ navigation }: Props) {
                   : "Créer mon compte"}
               </Text>
             </TouchableOpacity>
+
+            {/* Lien "mot de passe oublié" – uniquement en mode signin */}
+            {mode === "signin" && (
+              <TouchableOpacity
+                onPress={() => navigation.navigate("ForgotPasswordSheet")}
+                style={styles.forgotBtn}
+              >
+                <Text style={styles.forgotText}>Mot de passe oublié ?</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* Switch line */}
@@ -377,8 +398,22 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     fontSize: 18,
   },
+  forgotBtn: {
+    marginTop: 14,
+    alignItems: "center",
+  },
+  forgotText: {
+    color: "#6b7280",
+    fontSize: 15,
+    fontWeight: "600",
+  },
   gray: { color: "#8a8a8a", fontSize: 15 },
-  link: { fontSize: 20, fontWeight: "800", color: "#111", textAlign: "center" },
+  link: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#111",
+    textAlign: "center",
+  },
   error: { color: "#c0392b", marginTop: 10, textAlign: "center" },
 
   // Toast styles

@@ -15,17 +15,14 @@
     },
 
     "ios": {
-      "supportsTablet": false,                  
+      "supportsTablet": false,
       "bundleIdentifier": "com.jayjay930.Flexiii",
-      "buildNumber": "7",                           
+      "buildNumber": "8",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-
         "NSPhotoLibraryUsageDescription": "Flexii a besoin d’accéder à votre photothèque pour ajouter des photos à vos annonces (ex. images du logement ou véhicule). Sans cet accès, vous ne pourrez pas sélectionner des images existantes pour publier votre annonce.",
         "NSPhotoLibraryAddUsageDescription": "Flexii peut enregistrer des images (ex. reçus de réservation, exports PDF ou photos retouchées) dans votre photothèque, à votre demande.",
         "NSCameraUsageDescription": "Flexii utilise la caméra pour prendre des photos de votre logement ou véhicule à publier dans une annonce.",
-
-
         "UIApplicationSupportsIndirectInputEvents": true
       }
     },
@@ -56,7 +53,8 @@
           "dark": { "backgroundColor": "#000000" }
         }
       ],
-      "expo-font"
+      "expo-font",
+      "./plugins/disable-tablets-android.js"
     ],
 
     "experiments": {

@@ -1,6 +1,6 @@
 import React from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons, { IconName } from '@/src/ui/Icon';;
 import { useNavigation } from "@react-navigation/native";
 
 export default function HeaderBack({ title }: { title: string }) {

@@ -4,7 +4,6 @@ import {
   ActivityIndicator,
   Dimensions,
   FlatList,
-  Image,
   Linking,
   ScrollView,
   StyleSheet,
@@ -16,7 +15,8 @@ import {
   Pressable,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons";
+import { Image } from "expo-image";
+import Ionicons, { IconName } from "@/src/ui/Icon";
 import { CalendarList, DateData, LocaleConfig } from "react-native-calendars";
 import { supabase } from "@/src/lib/supabase";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
@@ -73,7 +73,8 @@ const unitFor = (t?: string | null) => {
   if (["mois","month"].includes(v)) return "mois";
   return v;
 };
-const equipIcon = (name: string): keyof typeof Ionicons.glyphMap => {
+
+const equipIcon = (name: string): IconName => {
   const n = (name || "").toLowerCase();
   if (/clim|ac|air/.test(n)) return "snow-outline";
   if (/gps|nav/.test(n)) return "navigate-outline";
@@ -97,10 +98,11 @@ const equipIcon = (name: string): keyof typeof Ionicons.glyphMap => {
   if (/mains? libres|kit/.test(n)) return "mic-outline";
   return "pricetag-outline";
 };
+
 const bust = (uri: string, id: string) =>
   `${uri}${uri.includes("?") ? "&" : "?"}v=${encodeURIComponent(id)}`;
 
-/* Helpers UTC-safe pour indispos (même logique que Logement) */
+/* Helpers UTC-safe pour indispos */
 const toUTC = (iso: string) => {
   const [y, m, d] = iso.split("-").map(Number);
   return new Date(Date.UTC(y, (m ?? 1) - 1, d ?? 1));
@@ -132,18 +134,23 @@ export default function VehiculeDetailsScreen({ route, navigation }: Props) {
     if (viewableItems?.length > 0) setIndex(viewableItems[0].index ?? 0);
   });
 
-  // ====== mêmes états que Logement ======
+  // indispos & prix overrides
   const [unavailable, setUnavailable] = useState<Record<string, true>>({});
   const [overridePrices, setOverridePrices] = useState<Record<string, number>>({});
   const [dayPriceOverride, setDayPriceOverride] = useState<number | null>(null);
   const [unitPriceOverride, setUnitPriceOverride] = useState<number | null>(null);
 
+  // calendrier
   const [isCalOpen, setCalOpen] = useState(false);
   const [startDate, setStartDate] = useState<string | null>(null);
   const [endDate, setEndDate] = useState<string | null>(null);
   const [tab, setTab] = useState<"dates" | "mois" | "flex">("dates");
 
-  // calcul “nuits/jours”
+  // cache bust pour images héros (mise à jour si id change)
+  const [heroBust, setHeroBust] = useState<number>(Date.now());
+  const lastImageIdsRef = useRef<string[]>([]);
+
+  // ====== Prix & totaux ======
   const nights = useMemo(() => {
     if (!startDate || !endDate) return 1;
     const s = new Date(startDate);
@@ -180,6 +187,14 @@ export default function VehiculeDetailsScreen({ route, navigation }: Props) {
         .filter((i: any) => i?.image_url)
         .map((i: any) => ({ id: i.id as string, url: i.image_url as string }));
 
+      // met à jour le bust si la liste d'IDs a changé (cache dur)
+      const newIds = images.map((i) => i.id);
+      const prevIds = lastImageIdsRef.current;
+      if (newIds.join(",") !== prevIds.join(",")) {
+        lastImageIdsRef.current = newIds;
+        setHeroBust(Date.now());
+      }
+
       const owner = row.users
         ? { id: row.users.id, full_name: row.users.full_name, avatar_url: row.users.avatar_url }
         : undefined;
@@ -213,7 +228,7 @@ export default function VehiculeDetailsScreen({ route, navigation }: Props) {
           .map((e: any) => ({ id: e.id as string, name: e.name as string })) ?? [];
       setEquipements(eq);
 
-      // 3) Réservations -> indisponibilités (même logique que logement)
+      // 3) Réservations -> indisponibilités
       const { data: res } = await supabase
         .from("reservations")
         .select("start_date, end_date, status")
@@ -260,28 +275,58 @@ export default function VehiculeDetailsScreen({ route, navigation }: Props) {
     }
   }, [id]);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
-
-  // Realtime basique
   useEffect(() => {
-    void chRef.current?.unsubscribe();
+    fetchAll();
+  }, [fetchAll]);
+
+  // Realtime : un seul canal bien ciblé
+  useEffect(() => {
+    if (chRef.current) {
+      void supabase.removeChannel(chRef.current);
+      chRef.current = null;
+    }
+
     const ch = supabase
-      .channel(`vehicule-detail-${id}`)
-      .on("postgres_changes",
+      .channel(`vehicule-detail-${id}`, {
+        config: { broadcast: { ack: false }, presence: { key: `vehicule-${id}` } },
+      })
+      .on(
+        "postgres_changes",
         { event: "*", schema: "public", table: "listings_vehicules", filter: `id=eq.${id}` },
         fetchAll
       )
-      .on("postgres_changes",
+      .on(
+        "postgres_changes",
         { event: "*", schema: "public", table: "listing_images", filter: `vehicule_id=eq.${id}` },
-        fetchAll
+        () => {
+          setHeroBust(Date.now());
+          fetchAll();
+        }
       )
-      .on("postgres_changes",
+      .on(
+        "postgres_changes",
         { event: "*", schema: "public", table: "listing_equipements", filter: `vehicule_id=eq.${id}` },
         fetchAll
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "reservations", filter: `vehicule_id=eq.${id}` },
+        fetchAll
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "availability_overrides", filter: `listing_id=eq.${id}` },
+        fetchAll
+      )
       .subscribe();
+
     chRef.current = ch;
-    return () => { void ch.unsubscribe(); };
+    return () => {
+      if (chRef.current) {
+        void supabase.removeChannel(chRef.current);
+        chRef.current = null;
+      }
+    };
   }, [id, fetchAll]);
 
   // ====== Négociation (identique à logement, mais kind="vehicule") ======
@@ -347,7 +392,7 @@ export default function VehiculeDetailsScreen({ route, navigation }: Props) {
     }
   }, [data, navigation]);
 
-  // retour depuis chat avec prix négocié → ouvre calendrier (même que logement)
+  // retour depuis chat avec prix négocié → ouvre calendrier
   useEffect(() => {
     if (route.params?.resetFromChatReserve) {
       if (typeof route.params?.negotiatedUnitPrice === "number") {
@@ -358,7 +403,7 @@ export default function VehiculeDetailsScreen({ route, navigation }: Props) {
     }
   }, [route.params?.resetFromChatReserve, route.params?.negotiatedUnitPrice, navigation]);
 
-  // ====== Calendrier (identique à logement) ======
+  // ====== Calendrier ======
   const toKey = (d: Date) => d.toISOString().slice(0, 10);
   const todayKey = new Date().toISOString().slice(0, 10);
   const isPastKey = (key: string) => key < todayKey;
@@ -416,7 +461,6 @@ export default function VehiculeDetailsScreen({ route, navigation }: Props) {
     setDayPriceOverride(null);
   };
 
-  // ouvrir calendrier (pas d’écran externe)
   const openCalendar = () => setCalOpen(true);
 
   // Aller au checkout (draft vehicule)
@@ -477,6 +521,23 @@ export default function VehiculeDetailsScreen({ route, navigation }: Props) {
     }
   };
 
+  // ---- Hero image item (mémo) ----
+  const HeroItem = React.memo(function HeroItem({ item }: { item: { id: string; url: string } }) {
+    const uri = item.url ? bust(item.url, String(heroBust)) : undefined;
+    return (
+      <Image
+        source={uri ? { uri } : require("../../assets/images/logement.jpg")}
+        style={styles.heroImage}
+        contentFit="cover"
+        transition={120}
+        cachePolicy="memory-disk"
+        recyclingKey={`hero-${item.id}`}
+        priority="high"
+        placeholder={require("../../assets/images/react-logo.png")}
+      />
+    );
+  });
+
   const Day = ({
     date, state, marking, onPress,
   }: {
@@ -518,15 +579,12 @@ export default function VehiculeDetailsScreen({ route, navigation }: Props) {
           horizontal
           pagingEnabled
           showsHorizontalScrollIndicator={false}
-          renderItem={({ item }) => (
-            <Image
-              source={item.url ? { uri: bust(item.url, item.id) } : require("../../assets/images/logement.jpg")}
-              style={styles.heroImage}
-              resizeMode="cover"
-            />
-          )}
+          renderItem={({ item }) => <HeroItem item={item} />}
           onViewableItemsChanged={onViewableItemsChanged.current}
           viewabilityConfig={viewConfigRef.current}
+          initialNumToRender={2}
+          windowSize={3}
+          removeClippedSubviews
         />
 
         <SafeAreaView edges={["top"]} style={styles.heroTopBar}>
@@ -623,6 +681,11 @@ export default function VehiculeDetailsScreen({ route, navigation }: Props) {
                 <Image
                   source={data.owner.avatar_url ? { uri: data.owner.avatar_url } : require("../../assets/images/logement.jpg")}
                   style={styles.hostAvatar}
+                  contentFit="cover"
+                  transition={120}
+                  cachePolicy="memory-disk"
+                  recyclingKey={`host-${data.owner.id}-${data.owner.avatar_url ?? "na"}`}
+                  placeholder={require("../../assets/images/flexii.png")}
                 />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.hostName}>{data.owner.full_name}</Text>
@@ -656,14 +719,14 @@ export default function VehiculeDetailsScreen({ route, navigation }: Props) {
             { icon: "alarm-outline", text: "Retard de restitution : frais supplémentaires possibles." },
           ].map((r, i) => (
             <View key={i} style={styles.ruleRow}>
-              <Ionicons name={r.icon as any} size={18} color="#111" />
+              <Ionicons name={r.icon as IconName} size={18} color="#111" />
               <Text style={styles.ruleText}>{r.text}</Text>
             </View>
           ))}
         </View>
       </ScrollView>
 
-      {/* ===== BARRE BAS (même UX que logement) ===== */}
+      {/* ===== BARRE BAS ===== */}
       <SafeAreaView style={styles.bottomSafe} edges={[]}>
         <View style={styles.bottomBar}>
           <View>

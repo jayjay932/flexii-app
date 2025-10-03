@@ -1,6 +1,6 @@
 import React from "react";
 import { View, TextInput, StyleSheet, ViewStyle } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons, { IconName } from '@/src/ui/Icon';;
 
 export default function SearchBar({
   topOffset = 0,

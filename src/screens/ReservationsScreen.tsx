@@ -1,5 +1,5 @@
 // src/screens/ReservationsScreen.tsx
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -7,25 +7,25 @@ import {
   FlatList,
   TouchableOpacity,
   ActivityIndicator,
-  Image,
-  ImageBackground,
   RefreshControl,
   Platform,
+  StyleSheet as RNStyleSheet,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import Ionicons from "react-native-vector-icons/Ionicons";
+import Ionicons from "@/src/ui/Icon";
 import { supabase } from "@/src/lib/supabase";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "@/src/navigation/RootNavigator";
+import { Image } from "expo-image";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Reservations">;
 
 type AnyListing = {
-  title?: string | null;       // logement/expérience
+  title?: string | null; // logement/expérience
   city?: string | null;
   listing_images?: { image_url: string | null }[] | null;
-  marque?: string | null;      // véhicule
-  modele?: string | null;      // véhicule
+  marque?: string | null; // véhicule
+  modele?: string | null; // véhicule
 };
 
 type Row = {
@@ -44,24 +44,44 @@ type Row = {
 };
 
 const money = (n: number, cur = "XOF") =>
-  new Intl.NumberFormat("fr-FR", { style: "currency", currency: cur as any, maximumFractionDigits: 0 }).format(
-    Number(n || 0)
-  );
+  new Intl.NumberFormat("fr-FR", {
+    style: "currency",
+    currency: cur as any,
+    maximumFractionDigits: 0,
+  }).format(Number(n || 0));
 
 const fmtRange = (a: string, b: string) => {
-  const A = new Date(a), B = new Date(b);
+  const A = new Date(a),
+    B = new Date(b);
   const opt: Intl.DateTimeFormatOptions = { day: "2-digit", month: "short" };
   return `${A.toLocaleDateString("fr-FR", opt)} – ${B.toLocaleDateString("fr-FR", opt)}`;
 };
+
+// Prend le premier élément quand PostgREST renvoie un tableau sur les relations
+function takeOne<T>(val: T | T[] | null | undefined): T | null {
+  if (Array.isArray(val)) return (val[0] as T) ?? null;
+  return (val ?? null) as T | null;
+}
 
 export default function ReservationsScreen({ navigation }: Props) {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchData = useCallback(async () => {
+  // anti race-condition
+  const reqSeq = useRef(0);
+
+  // debounce coalescé pour le realtime
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debounced = useCallback((fn: () => void, delay = 200) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(fn, delay);
+  }, []);
+
+  const fetchData = useCallback(async (silent = false) => {
+    const ticket = ++reqSeq.current;
+    if (!silent) setLoading(true);
     try {
-      setLoading(true);
       const { data: auth } = await supabase.auth.getSession();
       const uid = auth.session?.user?.id;
       if (!uid) {
@@ -69,68 +89,236 @@ export default function ReservationsScreen({ navigation }: Props) {
         return;
       }
 
-      // ✅ Un seul SELECT qui ramène les 3 types + leurs photos
+      // Un seul SELECT qui ramène les 3 types + leurs photos
       const { data, error } = await supabase
         .from("reservations")
-        .select(`
+        .select(
+          `
           id, start_date, end_date, total_price, currency, status,
           logement_id, vehicule_id, experience_id,
-          listings_logements:logement_id (
+          logement:logement_id (
             title, city,
             listing_images ( image_url )
           ),
-          listings_vehicules:vehicule_id (
+          vehicule:vehicule_id (
             marque, modele, city,
             listing_images ( image_url )
           ),
-          listings_experiences:experience_id (
+          experience:experience_id (
             title, city,
             listing_images ( image_url )
           )
-        `)
+        `
+        )
         .eq("user_id", uid)
-        .order("created_at", { ascending: false })
-        .returns<Row[]>();
+        .order("created_at", { ascending: false });
 
       if (error) throw error;
-      setRows(data ?? []);
+
+      const normalized: Row[] =
+        (data ?? []).map((r: any) => ({
+          id: r.id,
+          start_date: r.start_date,
+          end_date: r.end_date,
+          total_price: r.total_price,
+          currency: r.currency,
+          status: r.status,
+          logement_id: r.logement_id,
+          vehicule_id: r.vehicule_id,
+          experience_id: r.experience_id,
+          listings_logements: takeOne<AnyListing>(r.logement),
+          listings_vehicules: takeOne<AnyListing>(r.vehicule),
+          listings_experiences: takeOne<AnyListing>(r.experience),
+        })) ?? [];
+
+      if (ticket === reqSeq.current) setRows(normalized);
     } catch (e) {
       console.error(e);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [navigation]);
 
   useEffect(() => {
     fetchData();
+
+    const offFocus = navigation.addListener("focus", () => fetchData(true));
+
+    // Realtime unique + coalescing
+    const ch = supabase
+      .channel("user-reservations-rt")
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "reservations" },
+        (payload: any) => {
+          const r = payload.new as { id: string; status?: string | null; total_price?: number | null; currency?: string | null };
+          setRows((prev) =>
+            prev.map((x) =>
+              x.id === r.id
+                ? {
+                    ...x,
+                    status: r.status ?? x.status,
+                    total_price: typeof r.total_price === "number" ? r.total_price : x.total_price,
+                    currency: r.currency ?? x.currency,
+                  }
+                : x
+            )
+          );
+          debounced(() => fetchData(true), 200);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "reservations" },
+        () => debounced(() => fetchData(true), 150)
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "reservations" },
+        (payload: any) => {
+          const id = payload.old?.id as string | undefined;
+          if (!id) return;
+          setRows((prev) => prev.filter((x) => x.id !== id));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      offFocus();
+      supabase.removeChannel(ch);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [fetchData, debounced, navigation]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchData(true);
+    setRefreshing(false);
   }, [fetchData]);
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await fetchData();
-    setRefreshing(false);
-  };
-
-  const openDetails = (id: string) => {
-    const parent = navigation.getParent?.();
-    try {
-      navigation.navigate("ReservationDetails" as any, { id });
-    } catch {
-      parent?.navigate?.("ReservationDetails" as any, { id });
-    }
-  };
+  const openDetails = useCallback(
+    (id: string) => {
+      const parent = navigation.getParent?.();
+      try {
+        navigation.navigate("ReservationDetails" as any, { id });
+      } catch {
+        parent?.navigate?.("ReservationDetails" as any, { id });
+      }
+    },
+    [navigation]
+  );
 
   const empty = !loading && rows.length === 0;
 
+  // ---- Sous-composant carte mémoïsé pour limiter les re-renders ----
+  type CardProps = { item: Row; onPress: (id: string) => void };
+  const Card = useCallback(({ item, onPress }: CardProps) => {
+    const kind = item.logement_id ? "logement" : item.vehicule_id ? "vehicule" : "experience";
+    const L =
+      kind === "logement"
+        ? item.listings_logements
+        : kind === "vehicule"
+        ? item.listings_vehicules
+        : item.listings_experiences;
+
+    const imgs =
+      (L?.listing_images ?? [])
+        .map((x) => x?.image_url || "")
+        .filter(Boolean) as string[];
+
+    const cover = imgs[0] || "";
+    const second = imgs[1] || cover;
+
+    const title =
+      kind === "vehicule"
+        ? `${L?.marque ?? ""} ${L?.modele ?? ""}`.trim() || "Véhicule"
+        : L?.title || (kind === "logement" ? "Logement" : "Expérience");
+
+    const city = L?.city ?? "";
+    const cur = (item.currency || "XOF") as string;
+    const range = fmtRange(item.start_date, item.end_date);
+    const status =
+      item.status === "confirmed"
+        ? "Confirmée"
+        : item.status === "pending"
+        ? "En attente"
+        : item.status === "cancelled"
+        ? "Annulée"
+        : item.status === "completed"
+        ? "Terminée"
+        : (item.status || "—");
+
+    return (
+      <View style={styles.cardWrap}>
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle} numberOfLines={2}>{title}</Text>
+            <View style={styles.pill}>
+              <Text style={styles.pillTxt}>{status}</Text>
+            </View>
+          </View>
+
+          <Text style={styles.cardMeta} numberOfLines={1}>
+            {city ? `${city} • ` : ""}
+            {range} • {kind === "logement" ? "Logement" : kind === "vehicule" ? "Véhicule" : "Expérience"}
+          </Text>
+
+          <View style={styles.thumbRow}>
+            <Image
+              source={cover ? { uri: cover } : require("../../assets/images/logement.jpg")}
+              style={styles.thumb}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              transition={120}
+              priority="high"
+              allowDownscaling
+              placeholder={require("../../assets/images/flexii.png")}
+            />
+            <Image
+              source={second ? { uri: second } : require("../../assets/images/logement.jpg")}
+              style={styles.thumb}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              transition={120}
+              allowDownscaling
+              placeholder={require("../../assets/images/flexii.png")}
+            />
+          </View>
+
+          <View style={styles.footerRow}>
+            <View>
+              <Text style={styles.totalLabel}>Total</Text>
+              <Text style={styles.totalValue}>{money(item.total_price, cur)}</Text>
+            </View>
+            <TouchableOpacity activeOpacity={0.9} style={styles.cta} onPress={() => onPress(item.id)}>
+              <Text style={styles.ctaTxt}>Voir les détails</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    );
+  }, []);
+
+  const renderItem = useCallback(
+    ({ item }: { item: Row }) => <Card item={item} onPress={openDetails} />,
+    [openDetails, Card]
+  );
+
+  const keyExtractor = useCallback((it: Row) => it.id, []);
+  const ItemSeparator = useCallback(() => <View style={{ height: 16 }} />, []);
+
   return (
     <View style={styles.root}>
-      {/* Fond doux */}
+      {/* Fond doux ultra light avec expo-image */}
       <Image
         source={require("../../assets/images/logement.jpg")}
-        style={StyleSheet.absoluteFillObject as any}
+        style={RNStyleSheet.absoluteFillObject as any}
+        contentFit="cover"
         blurRadius={Platform.OS === "android" ? 8 : 12}
+        transition={150}
+        cachePolicy="memory-disk"
       />
-      <View style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(240,238,233,0.75)" }]} />
+      <View style={[RNStyleSheet.absoluteFill, { backgroundColor: "rgba(240,238,233,0.75)" }]} />
 
       <SafeAreaView edges={["top"]} style={styles.safe}>
         {/* Header */}
@@ -155,93 +343,17 @@ export default function ReservationsScreen({ navigation }: Props) {
         ) : (
           <FlatList
             data={rows}
-            keyExtractor={(it) => it.id}
+            keyExtractor={keyExtractor}
+            renderItem={renderItem}
+            ItemSeparatorComponent={ItemSeparator}
             contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-            renderItem={({ item }) => {
-              // Détecte le type (logement / vehicule / experience)
-              const kind = item.logement_id ? "logement" : item.vehicule_id ? "vehicule" : "experience";
-              const L =
-                kind === "logement"
-                  ? item.listings_logements
-                  : kind === "vehicule"
-                  ? item.listings_vehicules
-                  : item.listings_experiences;
-
-              const imgs =
-                (L?.listing_images ?? [])
-                  .map((x) => x?.image_url || "")
-                  .filter(Boolean) as string[];
-
-              const cover = imgs[0] || "";
-              const second = imgs[1] || cover;
-
-              const title =
-                kind === "vehicule"
-                  ? `${L?.marque ?? ""} ${L?.modele ?? ""}`.trim() || "Véhicule"
-                  : L?.title || (kind === "logement" ? "Logement" : "Expérience");
-
-              const city = L?.city ?? "";
-              const cur = (item.currency || "XOF") as string;
-              const range = fmtRange(item.start_date, item.end_date);
-              const status =
-                item.status === "confirmed"
-                  ? "Confirmée"
-                  : item.status === "pending"
-                  ? "En attente"
-                  : item.status === "cancelled"
-                  ? "Annulée"
-                  : item.status === "completed"
-                  ? "Terminée"
-                  : (item.status || "—");
-
-              return (
-                <View style={styles.cardWrap}>
-                  <View style={styles.card}>
-                    {/* Titre + statut */}
-                    <View style={styles.cardHeader}>
-                      <Text style={styles.cardTitle} numberOfLines={2}>
-                        {title}
-                      </Text>
-                      <View style={styles.pill}>
-                        <Text style={styles.pillTxt}>{status}</Text>
-                      </View>
-                    </View>
-
-                    {/* Ville + dates + type */}
-                    <Text style={styles.cardMeta} numberOfLines={1}>
-                      {city ? `${city} • ` : ""}
-                      {range} • {kind === "logement" ? "Logement" : kind === "vehicule" ? "Véhicule" : "Expérience"}
-                    </Text>
-
-                    {/* 2 miniatures */}
-                    <View style={styles.thumbRow}>
-                      <ImageBackground
-                        source={cover ? { uri: cover } : require("../../assets/images/logement.jpg")}
-                        style={styles.thumb}
-                        imageStyle={styles.thumbImg}
-                      />
-                      <ImageBackground
-                        source={second ? { uri: second } : require("../../assets/images/logement.jpg")}
-                        style={styles.thumb}
-                        imageStyle={styles.thumbImg}
-                      />
-                    </View>
-
-                    {/* Total + CTA */}
-                    <View style={styles.footerRow}>
-                      <View>
-                        <Text style={styles.totalLabel}>Total</Text>
-                        <Text style={styles.totalValue}>{money(item.total_price, cur)}</Text>
-                      </View>
-                      <TouchableOpacity activeOpacity={0.9} style={styles.cta} onPress={() => openDetails(item.id)}>
-                        <Text style={styles.ctaTxt}>Voir les détails</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                </View>
-              );
-            }}
+            // Perf
+            initialNumToRender={6}
+            windowSize={7}
+            maxToRenderPerBatch={6}
+            updateCellsBatchingPeriod={16}
+            removeClippedSubviews
           />
         )}
       </SafeAreaView>
@@ -277,8 +389,7 @@ const styles = StyleSheet.create({
   emptyTitle: { fontSize: 20, fontWeight: "900", color: "#111" },
   emptySub: { marginTop: 6, color: "#666", fontWeight: "600", textAlign: "center", paddingHorizontal: 16 },
 
-  // Carte
-  cardWrap: { marginBottom: 16 },
+  cardWrap: {},
   card: {
     backgroundColor: "rgba(255,255,255,0.92)",
     borderRadius: R,
@@ -300,7 +411,6 @@ const styles = StyleSheet.create({
 
   thumbRow: { flexDirection: "row", gap: 12, marginTop: 12 },
   thumb: { flex: 1, height: 110, borderRadius: 14, overflow: "hidden" },
-  thumbImg: { borderRadius: 14 },
 
   footerRow: { marginTop: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   totalLabel: { color: "#6b6b6b", fontWeight: "700" },

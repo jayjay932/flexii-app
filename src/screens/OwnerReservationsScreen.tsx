@@ -1,5 +1,5 @@
 // src/screens/OwnerReservationsScreen.tsx
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -7,25 +7,24 @@ import {
   FlatList,
   TouchableOpacity,
   ActivityIndicator,
-  ImageBackground,
   RefreshControl,
   Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import Ionicons from "react-native-vector-icons/Ionicons";
+import Ionicons from "@/src/ui/Icon";
 import { supabase } from "@/src/lib/supabase";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "@/src/navigation/RootNavigator";
+import { Image } from "expo-image";
 
 type Props = NativeStackScreenProps<RootStackParamList, "ReservationsRecues">;
 
-/** Relation embarquée normalisée */
 type AnyListing = {
   title?: string | null;
   city?: string | null;
   listing_images?: { image_url: string | null }[] | null;
-  marque?: string | null; // véhicule
-  modele?: string | null; // véhicule
+  marque?: string | null;
+  modele?: string | null;
 };
 
 type Row = {
@@ -46,17 +45,22 @@ type Row = {
 };
 
 const money = (n: number, cur = "XOF") =>
-  new Intl.NumberFormat("fr-FR", { style: "currency", currency: cur as any, maximumFractionDigits: 0 }).format(
-    Number(n || 0)
-  );
+  new Intl.NumberFormat("fr-FR", {
+    style: "currency",
+    currency: cur as any,
+    maximumFractionDigits: 0,
+  }).format(Number(n || 0));
 
 const fmtRange = (a: string, b: string) => {
-  const A = new Date(a), B = new Date(b);
+  const A = new Date(a),
+    B = new Date(b);
   const opt: Intl.DateTimeFormatOptions = { day: "2-digit", month: "short" };
-  return `${A.toLocaleDateString("fr-FR", opt)} – ${B.toLocaleDateString("fr-FR", opt)}`;
+  return `${A.toLocaleDateString("fr-FR", opt)} – ${B.toLocaleDateString(
+    "fr-FR",
+    opt
+  )}`;
 };
 
-// PostgREST peut renvoyer un tableau sur les relations → on prend le 1er
 function takeOne<T>(val: T | T[] | null | undefined): T | null {
   if (Array.isArray(val)) return (val[0] as T) ?? null;
   return (val ?? null) as T | null;
@@ -67,10 +71,10 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // —— Anti-race condition
+  // anti race-condition
   const reqSeq = useRef(0);
 
-  // —— Debounce
+  // debounce coalescé
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const debounced = useCallback((fn: () => void, delay = 200) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -89,7 +93,7 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
           return;
         }
 
-        // LOGEMENTS (inner join + filtres owner + photos)
+        // LOGEMENTS
         const qL = await supabase
           .from("reservations")
           .select(
@@ -121,7 +125,7 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
           .eq("vehicule.owner_id", uid)
           .order("created_at", { ascending: false });
 
-        // EXPERIENCES (si tu les utilises)
+        // EXPERIENCES
         const qE = await supabase
           .from("reservations")
           .select(
@@ -141,7 +145,6 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
         if (qV.error) throw qV.error;
         if (qE.error) throw qE.error;
 
-        // Normalisation
         const normL: Row[] = (qL.data as any[]).map((r) => ({
           id: r.id,
           created_at: r.created_at,
@@ -194,7 +197,9 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
         }));
 
         const merged = [...normL, ...normV, ...normE].sort(
-          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          (a, b) =>
+            new Date(b.created_at).getTime() -
+            new Date(a.created_at).getTime()
         );
 
         if (ticket === reqSeq.current) setRows(merged);
@@ -209,10 +214,9 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
 
   useEffect(() => {
     fetchData();
-
     const offFocus = navigation.addListener("focus", () => fetchData(true));
 
-    // —— Realtime (UPDATE/INSERT/DELETE) ——
+    // Realtime unique + coalescing
     const ch = supabase
       .channel("owner-reservations-rt")
       .on(
@@ -224,7 +228,6 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
             status?: string | null;
             espece_confirmation?: boolean | null;
           };
-
           setRows((prev) =>
             prev.map((x) =>
               x.id === r.id
@@ -239,18 +242,23 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
                 : x
             )
           );
-
           debounced(() => fetchData(true), 200);
         }
       )
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "reservations" }, () =>
-        debounced(() => fetchData(true), 150)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "reservations" },
+        () => debounced(() => fetchData(true), 150)
       )
-      .on("postgres_changes", { event: "DELETE", schema: "public", table: "reservations" }, (payload: any) => {
-        const id = payload.old?.id as string | undefined;
-        if (!id) return;
-        setRows((prev) => prev.filter((x) => x.id !== id));
-      })
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "reservations" },
+        (payload: any) => {
+          const id = payload.old?.id as string | undefined;
+          if (!id) return;
+          setRows((prev) => prev.filter((x) => x.id !== id));
+        }
+      )
       .subscribe();
 
     return () => {
@@ -260,29 +268,134 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
     };
   }, [fetchData, debounced, navigation]);
 
-  const onRefresh = async () => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await fetchData(true);
     setRefreshing(false);
-  };
+  }, [fetchData]);
 
-  const openDetails = (id: string) => {
-    const parent = navigation.getParent?.();
-    try {
-      navigation.navigate("OwnerReservationDetails" as any, { id });
-    } catch {
-      parent?.navigate?.("OwnerReservationDetails" as any, { id });
-    }
-  };
+  const openDetails = useCallback(
+    (id: string) => {
+      const parent = navigation.getParent?.();
+      try {
+        navigation.navigate("OwnerReservationDetails" as any, { id });
+      } catch {
+        parent?.navigate?.("OwnerReservationDetails" as any, { id });
+      }
+    },
+    [navigation]
+  );
 
   const empty = !loading && rows.length === 0;
 
+  // ---- RenderItem mémoïsé + sous-composant pour limiter les re-renders ----
+  type ItemProps = { row: Row; onPress: (id: string) => void };
+  const Card = useCallback(({ row, onPress }: ItemProps) => {
+    const kind = row.logement_id ? "logement" : row.vehicule_id ? "vehicule" : "experience";
+    const L =
+      kind === "logement"
+        ? row.listings_logements
+        : kind === "vehicule"
+        ? row.listings_vehicules
+        : row.listings_experiences;
+
+    const imgs =
+      (L?.listing_images ?? []).map((x) => x?.image_url || "").filter(Boolean) as string[];
+
+    const cover = imgs[0] || "";
+    const second = imgs[1] || cover;
+
+    const title =
+      kind === "vehicule"
+        ? `${L?.marque ?? ""} ${L?.modele ?? ""}`.trim() || "Véhicule"
+        : L?.title || (kind === "logement" ? "Logement" : "Expérience");
+
+    const city = L?.city ?? "";
+    const cur = (row.currency || "XOF") as string;
+    const range = fmtRange(row.start_date, row.end_date);
+
+    const status =
+      row.status === "confirmed"
+        ? "Confirmée"
+        : row.status === "pending"
+        ? "En attente"
+        : row.status === "cancelled"
+        ? "Annulée"
+        : row.status === "completed"
+        ? "Terminée"
+        : (row.status || "—");
+
+    return (
+      <View style={styles.cardWrap}>
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle} numberOfLines={2}>{title}</Text>
+            <View style={styles.pill}>
+              <Text style={styles.pillTxt}>{status}</Text>
+            </View>
+          </View>
+
+          <Text style={styles.cardMeta} numberOfLines={1}>
+            {city ? `${city} • ` : ""}
+            {range} • {kind === "logement" ? "Logement" : kind === "vehicule" ? "Véhicule" : "Expérience"}
+          </Text>
+
+          <View style={styles.thumbRow}>
+            <Image
+              source={cover ? { uri: cover } : require("../../assets/images/logement2.jpg")}
+              style={styles.thumb}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              transition={120}
+              priority="high"
+              allowDownscaling
+              placeholder={require("../../assets/images/flexii.png")}
+              blurRadius={0}
+            />
+            <Image
+              source={second ? { uri: second } : require("../../assets/images/logement.jpg")}
+              style={styles.thumb}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              transition={120}
+              allowDownscaling
+              placeholder={require("../../assets/images/flexii.png")}
+            />
+          </View>
+
+          <View style={styles.footerRow}>
+            <View>
+              <Text style={styles.totalLabel}>Total</Text>
+              <Text style={styles.totalValue}>{money(row.total_price, cur)}</Text>
+            </View>
+
+            <TouchableOpacity activeOpacity={0.9} style={styles.cta} onPress={() => onPress(row.id)}>
+              <Text style={styles.ctaTxt}>Voir les détails</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    );
+  }, []);
+
+  const renderItem = useCallback(
+    ({ item }: { item: Row }) => <Card row={item} onPress={openDetails} />,
+    [openDetails, Card]
+  );
+
+  const keyExtractor = useCallback((it: Row) => it.id, []);
+  const ItemSeparator = useCallback(() => <View style={{ height: 16 }} />, []);
+
   return (
     <View style={styles.root}>
-      <ImageBackground
+      {/* fond flou ultra light avec expo-image */}
+      <Image
         source={require("../../assets/images/logement.jpg")}
         style={StyleSheet.absoluteFillObject as any}
+        contentFit="cover"
         blurRadius={Platform.OS === "android" ? 8 : 12}
+        transition={150}
+        cachePolicy="memory-disk"
       />
       <View style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(240,238,233,0.78)" }]} />
 
@@ -309,99 +422,16 @@ export default function OwnerReservationsScreen({ navigation }: Props) {
         ) : (
           <FlatList
             data={rows}
-            keyExtractor={(it) => it.id}
+            keyExtractor={keyExtractor}
+            renderItem={renderItem}
             contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+            ItemSeparatorComponent={ItemSeparator}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-            renderItem={({ item }) => {
-              const kind = item.logement_id
-                ? "logement"
-                : item.vehicule_id
-                ? "vehicule"
-                : "experience";
-
-              const L =
-                kind === "logement"
-                  ? item.listings_logements
-                  : kind === "vehicule"
-                  ? item.listings_vehicules
-                  : item.listings_experiences;
-
-              const imgs =
-                (L?.listing_images ?? [])
-                  .map((x) => x?.image_url || "")
-                  .filter(Boolean) as string[];
-
-              const cover = imgs[0] || "";
-              const second = imgs[1] || cover;
-
-              const title =
-                kind === "vehicule"
-                  ? `${L?.marque ?? ""} ${L?.modele ?? ""}`.trim() || "Véhicule"
-                  : L?.title || (kind === "logement" ? "Logement" : "Expérience");
-
-              const city = L?.city ?? "";
-              const cur = (item.currency || "XOF") as string;
-              const range = fmtRange(item.start_date, item.end_date);
-
-              const status =
-                item.status === "confirmed"
-                  ? "Confirmée"
-                  : item.status === "pending"
-                  ? "En attente"
-                  : item.status === "cancelled"
-                  ? "Annulée"
-                  : item.status === "completed"
-                  ? "Terminée"
-                  : (item.status || "—");
-
-              return (
-                <View style={styles.cardWrap}>
-                  <View style={styles.card}>
-                    <View style={styles.cardHeader}>
-                      <Text style={styles.cardTitle} numberOfLines={2}>
-                        {title}
-                      </Text>
-                      <View style={styles.pill}>
-                        <Text style={styles.pillTxt}>{status}</Text>
-                      </View>
-                    </View>
-
-                    <Text style={styles.cardMeta} numberOfLines={1}>
-                      {city ? `${city} • ` : ""}
-                      {range} • {kind === "logement" ? "Logement" : kind === "vehicule" ? "Véhicule" : "Expérience"}
-                    </Text>
-
-                    <View style={styles.thumbRow}>
-                      <ImageBackground
-                        source={cover ? { uri: cover } : require("../../assets/images/logement2.jpg")}
-                        style={styles.thumb}
-                        imageStyle={styles.thumbImg}
-                      />
-                      <ImageBackground
-                        source={second ? { uri: second } : require("../../assets/images/logement.jpg")}
-                        style={styles.thumb}
-                        imageStyle={styles.thumbImg}
-                      />
-                    </View>
-
-                    <View style={styles.footerRow}>
-                      <View>
-                        <Text style={styles.totalLabel}>Total</Text>
-                        <Text style={styles.totalValue}>{money(item.total_price, cur)}</Text>
-                      </View>
-
-                      <TouchableOpacity
-                        activeOpacity={0.9}
-                        style={styles.cta}
-                        onPress={() => openDetails(item.id)}
-                      >
-                        <Text style={styles.ctaTxt}>Voir les détails</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                </View>
-              );
-            }}
+            initialNumToRender={6}
+            windowSize={7}
+            maxToRenderPerBatch={6}
+            updateCellsBatchingPeriod={16}
+            removeClippedSubviews
           />
         )}
       </SafeAreaView>
@@ -424,12 +454,9 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   roundBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 40, height: 40, borderRadius: 20,
     backgroundColor: "rgba(255,255,255,0.95)",
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: "center", justifyContent: "center",
   },
   title: { fontSize: 26, fontWeight: "900", color: "#111" },
 
@@ -437,7 +464,7 @@ const styles = StyleSheet.create({
   emptyTitle: { fontSize: 20, fontWeight: "900", color: "#111" },
   emptySub: { marginTop: 6, color: "#666", fontWeight: "600", textAlign: "center", paddingHorizontal: 16 },
 
-  cardWrap: { marginBottom: 16 },
+  cardWrap: { },
   card: {
     backgroundColor: "rgba(255,255,255,0.92)",
     borderRadius: R,
@@ -459,7 +486,6 @@ const styles = StyleSheet.create({
 
   thumbRow: { flexDirection: "row", gap: 12, marginTop: 12 },
   thumb: { flex: 1, height: 110, borderRadius: 14, overflow: "hidden" },
-  thumbImg: { borderRadius: 14 },
 
   footerRow: { marginTop: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   totalLabel: { color: "#6b6b6b", fontWeight: "700" },

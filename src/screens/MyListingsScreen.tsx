@@ -10,7 +10,7 @@ import {
   RefreshControl,
   Alert,
 } from "react-native";
-import Ionicons from "react-native-vector-icons/Ionicons";
+import Ionicons, { IconName } from '@/src/ui/Icon';
 import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "@/src/lib/supabase";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";

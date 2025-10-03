@@ -4,7 +4,6 @@ import {
   ActivityIndicator,
   Dimensions,
   FlatList,
-  Image,
   ImageBackground,
   StyleSheet,
   Text,
@@ -12,7 +11,8 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons";
+import { Image } from "expo-image";
+import Ionicons from "@/src/ui/Icon";
 import { supabase } from "@/src/lib/supabase";
 import SegmentedTabs from "@/src/components/SegmentedTabs";
 import SearchBar from "@/src/components/SearchBar";
@@ -85,8 +85,6 @@ export default function VehiculesScreen({ navigation }: any) {
   }, [filters, activeChip]);
 
   const resetFilters = useCallback(() => {
-    // 1 seul tap : on se contente de reset l’état
-    // Le refetch part tout seul via l'useEffect([fetchVehicules])
     setFilters({});
     setActiveChip(null);
   }, []);
@@ -213,7 +211,7 @@ export default function VehiculesScreen({ navigation }: any) {
     fetchVehicules({ showSpinner: true });
   }, [fetchVehicules]);
 
-  // Realtime : UN SEUL canal
+  // Realtime : UN SEUL canal filtré
   useEffect(() => {
     // nettoie un éventuel ancien canal
     if (channelRef.current) {
@@ -224,7 +222,9 @@ export default function VehiculesScreen({ navigation }: any) {
     const handleChange = () => fetchVehicules({ showSpinner: false });
 
     const ch = supabase
-      .channel("vehicules-rt")
+      .channel("vehicules-rt", {
+        config: { broadcast: { ack: false }, presence: { key: "vehicules" } },
+      })
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "listings_vehicules" },
@@ -234,6 +234,7 @@ export default function VehiculesScreen({ navigation }: any) {
         "postgres_changes",
         { event: "*", schema: "public", table: "listing_images" },
         (payload) => {
+          // si votre table a une colonne vehicule_id
           const vehiculeId =
             (payload.new as any)?.vehicule_id ?? (payload.old as any)?.vehicule_id;
           if (vehiculeId) {
@@ -288,10 +289,21 @@ export default function VehiculesScreen({ navigation }: any) {
     }
   };
 
-  const titleOf = (v: Vehicule) => v.title || `${v.marque} ${v.modele}`.trim();
+  const titleOf = useCallback(
+    (v: Vehicule) => v.title || `${v.marque} ${v.modele}`.trim(),
+    []
+  );
 
-  const renderCard = ({ item }: { item: Vehicule }) => {
-    const bust = imageBust[item.id];
+  // ------- Item card (mémo) -------
+  const VehicleCard = React.memo(function VehicleCard({
+    item,
+    onPress,
+    bust,
+  }: {
+    item: Vehicule;
+    onPress: () => void;
+    bust?: number;
+  }) {
     const uri =
       item.image_url &&
       `${item.image_url}${item.image_url.includes("?") ? "&" : "?"}v=${encodeURIComponent(
@@ -299,19 +311,19 @@ export default function VehiculesScreen({ navigation }: any) {
       )}`;
 
     return (
-      <TouchableOpacity
-        activeOpacity={0.9}
-        onPress={() => navigation.navigate("VehiculeDetails", { id: item.id })}
-        style={styles.card}
-      >
+      <TouchableOpacity activeOpacity={0.9} onPress={onPress} style={styles.card}>
         <View style={styles.cardImageWrap}>
           <Image
             key={`${item.id}-${item.image_id ?? "noimg"}-${bust ?? 0}`}
             source={uri ? { uri } : require("../../assets/images/logement.jpg")}
             style={styles.cardImage}
-            resizeMode="cover"
+            contentFit="cover"
+            transition={120}
+            cachePolicy="memory-disk"
+            recyclingKey={`${item.id}-${item.image_id ?? "noimg"}`}
+            priority="high"
+            placeholder={require("../../assets/images/react-logo.png")}
           />
-
           <View style={styles.favBtn}>
             <Ionicons name="heart-outline" size={20} color="#111" />
           </View>
@@ -322,7 +334,7 @@ export default function VehiculesScreen({ navigation }: any) {
             {titleOf(item)}
           </Text>
           <Text style={styles.cardPrice}>
-            {item.price} €/ {unitFor(item.rental_type)}
+            {item.price} XOF/ {unitFor(item.rental_type)}
           </Text>
         </View>
 
@@ -346,7 +358,20 @@ export default function VehiculesScreen({ navigation }: any) {
         </View>
       </TouchableOpacity>
     );
-  };
+  });
+
+  const renderItem = useCallback(
+    ({ item }: { item: Vehicule }) => (
+      <VehicleCard
+        item={item}
+        bust={imageBust[item.id]}
+        onPress={() => navigation.navigate("VehiculeDetails", { id: item.id })}
+      />
+    ),
+    [imageBust, navigation]
+  );
+
+  const keyExtractor = useCallback((it: Vehicule) => it.id, []);
 
   if (loading) {
     return (
@@ -420,10 +445,17 @@ export default function VehiculesScreen({ navigation }: any) {
         ) : (
           <FlatList
             data={vehicules}
-            keyExtractor={(it) => it.id}
-            renderItem={renderCard}
+            keyExtractor={keyExtractor}
+            renderItem={renderItem}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingBottom: 80 }}
+            // Perf tuning
+            initialNumToRender={8}
+            windowSize={8}
+            maxToRenderPerBatch={8}
+            updateCellsBatchingPeriod={16}
+            removeClippedSubviews
+            getItemLayout={undefined} // hauteur variable (cartes avec texte)
           />
         )}
       </View>
@@ -438,7 +470,7 @@ export default function VehiculesScreen({ navigation }: any) {
           setFilters(f);
           setActiveChip(null);
           setSearchOpen(false);
-          // Pas de fetch manuel ici non plus : l'useEffect va prendre le relais
+          // le fetch se déclenche via useEffect([fetchVehicules])
         }}
       />
     </View>

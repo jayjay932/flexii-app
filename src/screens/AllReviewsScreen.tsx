@@ -11,7 +11,7 @@ import {
   TextInput,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons, { IconName } from '@/src/ui/Icon';;
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { supabase } from "@/src/lib/supabase";
 import { RootStackParamList } from "../navigation/RootNavigator";

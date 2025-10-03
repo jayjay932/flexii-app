@@ -13,7 +13,7 @@ import {
   Platform,
   Switch,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons, { IconName } from '@/src/ui/Icon';;
 
 /* ---------- Types ---------- */
 export type VehicleFilters = {

@@ -1,6 +1,7 @@
+// src/components/BottomNavBar.tsx
 import React, { useEffect, useState } from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons, { IconName } from "@/src/ui/Icon";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import { supabase } from "@/src/lib/supabase";
@@ -52,7 +53,7 @@ export default function BottomNavBar({
   }: {
     k: TabKey;
     label: string;
-    icon: keyof typeof Ionicons.glyphMap;
+    icon: IconName;
     badgeContent?: number | string | null;
   }) => {
     const active = current === k;
@@ -106,8 +107,16 @@ export default function BottomNavBar({
         <View style={[styles.bar, { paddingBottom: 10 + insets.bottom }]}>
           <Item k="logements" label="Explorer" icon="search" />
           <Item k="Favoris" label="Favoris" icon="heart-outline" />
+          {/* alias ajouté dans Icon.tsx */}
           <Item k="Voyages" label="Réservations" icon="airplane-outline" />
-          <Item k="Messages" label="Messages" icon="chatbubble-ellipses-outline" badgeContent={messagesBadge ?? null} />
+          {/* alias ajouté dans Icon.tsx */}
+          <Item
+            k="Messages"
+            label="Messages"
+            icon="chatbubble-ellipses-outline"
+            badgeContent={messagesBadge ?? null}
+          />
+          {/* alias ajouté dans Icon.tsx */}
           <Item k="Profil" label="Profil" icon="person-circle-outline" />
         </View>
       </View>
