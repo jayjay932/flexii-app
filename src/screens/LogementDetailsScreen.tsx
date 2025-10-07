@@ -16,7 +16,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
-import Ionicons, { IconName } from '@/src/ui/Icon';;
+import Ionicons from '@/src/ui/Icon';;
 import { CalendarList, DateData, LocaleConfig } from "react-native-calendars";
 import { supabase } from "@/src/lib/supabase";
 import { RootStackParamList } from "../navigation/RootNavigator";

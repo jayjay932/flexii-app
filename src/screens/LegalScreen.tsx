@@ -2,7 +2,7 @@
 import React, { useMemo } from "react";
 import { View, ScrollView, StyleSheet, Text, Platform, TouchableOpacity } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import Ionicons, { IconName } from '@/src/ui/Icon';;
+import Ionicons from '@/src/ui/Icon';;
 import { useNavigation } from "@react-navigation/native";
 
 /**

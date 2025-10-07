@@ -5,7 +5,7 @@ import {
   InputAccessoryView
 } from "react-native";
 import { useSafeAreaInsets, SafeAreaView } from "react-native-safe-area-context";
-import Ionicons, { IconName } from '@/src/ui/Icon';;
+import Ionicons from '@/src/ui/Icon';;
 import { useRoute, useNavigation } from "@react-navigation/native";
 import { supabase } from "@/src/lib/supabase";
 

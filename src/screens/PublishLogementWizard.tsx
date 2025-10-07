@@ -17,7 +17,7 @@ import {
   Linking,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import Ionicons, { IconName } from '@/src/ui/Icon';;
+import Ionicons from '@/src/ui/Icon';;
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system";
 import { supabase } from "@/src/lib/supabase";
@@ -81,10 +81,10 @@ function guessContentType(uri: string) {
   return { ext: "jpg", contentType: "image/jpeg" };
 }
 
-/** ✅ Demande d’autorisation claire (conforme App Store) */
+/** ✅ Demande d'autorisation claire (conforme App Store) */
 async function ensurePhotoPermission(): Promise<boolean> {
   try {
-    // 1) Vérifie l’état actuel
+    // 1) Vérifie l'état actuel
     let perm = await ImagePicker.getMediaLibraryPermissionsAsync();
 
     // 2) Demande si possible
@@ -96,7 +96,7 @@ async function ensurePhotoPermission(): Promise<boolean> {
     if (perm.status !== "granted") {
       Alert.alert(
         "Accès aux photos requis",
-        "Flexii utilise vos photos pour illustrer vos annonces (ex. photos du logement). Vous pouvez autoriser l’accès dans Réglages.",
+        "Flexii utilise vos photos pour illustrer vos annonces (ex. photos du logement). Vous pouvez autoriser l'accès dans Réglages.",
         [
           { text: "Ouvrir Réglages", onPress: () => Linking.openSettings() },
           { text: "Annuler", style: "cancel" },
@@ -112,23 +112,28 @@ async function ensurePhotoPermission(): Promise<boolean> {
   }
 }
 
-/** ✅ Ouvre la galerie de façon sûre (déclenche la pop-up iOS au bon moment) */
-async function pickSingleImage(): Promise<Picked | null> {
+/** ✅ Ouvre la galerie pour sélectionner PLUSIEURS images */
+async function pickMultipleImages(): Promise<Picked[]> {
   const ok = await ensurePhotoPermission();
-  if (!ok) return null;
+  if (!ok) return [];
 
   const res = await ImagePicker.launchImageLibraryAsync({
     mediaTypes: ImagePicker.MediaTypeOptions.Images,
     quality: 0.9,
     base64: true,
-    selectionLimit: 1,
+    allowsMultipleSelection: true, // ✅ Active la sélection multiple
+    selectionLimit: 0, // ✅ 0 = pas de limite (ou mettez un nombre comme 10)
     exif: false,
     allowsEditing: false,
   });
 
-  if (res.canceled || !res.assets?.length) return null;
-  const a = res.assets[0];
-  return { uri: a.uri, base64: a.base64 || undefined };
+  if (res.canceled || !res.assets?.length) return [];
+  
+  // ✅ Retourner toutes les images sélectionnées
+  return res.assets.map(a => ({ 
+    uri: a.uri, 
+    base64: a.base64 || undefined 
+  }));
 }
 
 /* ---------------------------------------------------- */
@@ -320,12 +325,14 @@ export default function PublishLogementScreen({ navigation }: Props) {
 
   const addPhoto = async () => {
     try {
-      const picked = await pickSingleImage();
-      if (!picked) return;
-      setImages((prev) => [{ uri: picked.uri, base64: picked.base64 }, ...prev]);
+      const picked = await pickMultipleImages(); // ✅ Utiliser la nouvelle fonction
+      if (picked.length === 0) return;
+      
+      // ✅ Ajouter toutes les images sélectionnées (les nouvelles en premier)
+      setImages((prev) => [...picked, ...prev]);
     } catch (e: any) {
       console.error(e);
-      Alert.alert("Oups", "Impossible d’ouvrir votre galerie.");
+      Alert.alert("Oups", "Impossible d'ouvrir votre galerie.");
     }
   };
 
@@ -419,7 +426,7 @@ export default function PublishLogementScreen({ navigation }: Props) {
       navigation.replace("LogementDetails", { id: listingId });
     } catch (e: any) {
       console.error(e);
-      Alert.alert("Erreur", e?.message ?? "Impossible de publier l’annonce.");
+      Alert.alert("Erreur", e?.message ?? "Impossible de publier l'annonce.");
     } finally {
       setPublishing(false);
     }
@@ -483,11 +490,11 @@ export default function PublishLogementScreen({ navigation }: Props) {
                 <View style={styles.imagesHeader}>
                   <Label>Photos</Label>
                   <TouchableOpacity onPress={addPhoto} style={styles.addPhotoBtn} activeOpacity={0.9}>
-                    <Text style={styles.addPhotoTxt}>Ajouter une photo</Text>
+                    <Text style={styles.addPhotoTxt}>Ajouter des photos</Text>
                   </TouchableOpacity>
                 </View>
 
-                <Text>ATTENTION : la dernière photo ajoutée sera affichée en première.</Text>
+                <Text style={styles.hint}>💡 Les dernières photos ajoutées seront affichées en premier.</Text>
 
                 <View style={[styles.imagesGrid, invalidImages && styles.imagesGridError]}>
                   <TouchableOpacity onPress={addPhoto} style={styles.plusTile} activeOpacity={0.8}>
@@ -521,7 +528,7 @@ export default function PublishLogementScreen({ navigation }: Props) {
                 <Input
                   value={title}
                   onChangeText={setTitle}
-                  placeholder="Titre de l’annonce"
+                  placeholder="Titre de l'annonce"
                   style={[invalidTitle && styles.inputError]}
                 />
                 {invalidTitle && (
@@ -697,7 +704,7 @@ const styles = StyleSheet.create({
   imagesHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
   addPhotoBtn: { backgroundColor: "#111", paddingHorizontal: 12, paddingVertical: 10, borderRadius: 999 },
   addPhotoTxt: { color: "#fff", fontWeight: "900" },
-  imagesGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  imagesGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 8 },
   imagesGridError: {
     borderWidth: 1,
     borderColor: "#E61E4D",

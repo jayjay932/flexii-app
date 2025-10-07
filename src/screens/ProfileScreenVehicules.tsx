@@ -13,7 +13,7 @@ import {
   Platform,
   ToastAndroid,
 } from "react-native";
-import Ionicons, { IconName } from '@/src/ui/Icon';
+import Ionicons from '@/src/ui/Icon';
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
 import { supabase } from "@/src/lib/supabase";

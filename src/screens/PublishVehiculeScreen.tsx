@@ -14,9 +14,10 @@ import {
   TouchableWithoutFeedback,
   InputAccessoryView,
   Image,
+  Linking,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import Ionicons, { IconName } from '@/src/ui/Icon';;
+import Ionicons from '@/src/ui/Icon';;
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system";
 import { supabase } from "@/src/lib/supabase";
@@ -75,20 +76,56 @@ function guessContentType(uri: string) {
   return { ext: "jpg", contentType: "image/jpeg" };
 }
 
-async function pickSingleImage(): Promise<Picked | null> {
-  const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (status !== "granted") {
-    Alert.alert("Permission", "Autorisez l’accès aux photos pour ajouter des images.");
-    return null;
+/** ✅ Demande d'autorisation claire (conforme App Store) */
+async function ensurePhotoPermission(): Promise<boolean> {
+  try {
+    let perm = await ImagePicker.getMediaLibraryPermissionsAsync();
+
+    if (perm.status !== "granted" && perm.canAskAgain) {
+      perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    }
+
+    if (perm.status !== "granted") {
+      Alert.alert(
+        "Accès aux photos requis",
+        "Flexii utilise vos photos pour illustrer vos annonces (ex. photos du véhicule). Vous pouvez autoriser l'accès dans Réglages.",
+        [
+          { text: "Ouvrir Réglages", onPress: () => Linking.openSettings() },
+          { text: "Annuler", style: "cancel" },
+        ]
+      );
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error("ensurePhotoPermission error", e);
+    Alert.alert("Oups", "Impossible de vérifier la permission Photos.");
+    return false;
   }
+}
+
+/** ✅ Ouvre la galerie pour sélectionner PLUSIEURS images */
+async function pickMultipleImages(): Promise<Picked[]> {
+  const ok = await ensurePhotoPermission();
+  if (!ok) return [];
+
   const res = await ImagePicker.launchImageLibraryAsync({
     mediaTypes: ImagePicker.MediaTypeOptions.Images,
     quality: 0.85,
     base64: true,
+    allowsMultipleSelection: true, // ✅ Active la sélection multiple
+    selectionLimit: 0, // ✅ 0 = pas de limite
+    exif: false,
+    allowsEditing: false,
   });
-  if (res.canceled || !res.assets?.length) return null;
-  const a = res.assets[0];
-  return { uri: a.uri, base64: a.base64 || undefined };
+
+  if (res.canceled || !res.assets?.length) return [];
+  
+  // ✅ Retourner toutes les images sélectionnées
+  return res.assets.map(a => ({ 
+    uri: a.uri, 
+    base64: a.base64 || undefined 
+  }));
 }
 
 /* ---------------------------------------------------- */
@@ -284,11 +321,18 @@ export default function PublishVehiculeScreen({ navigation }: Props) {
   ]);
 
   const addPhoto = async () => {
-    const picked = await pickSingleImage();
-    if (!picked) return;
-    // ⚠️ La dernière photo ajoutée sera utilisée en première
-    setImages((prev) => [{ uri: picked.uri, base64: picked.base64 }, ...prev]);
+    try {
+      const picked = await pickMultipleImages(); // ✅ Utiliser la nouvelle fonction
+      if (picked.length === 0) return;
+      
+      // ✅ Ajouter toutes les images sélectionnées (les nouvelles en premier)
+      setImages((prev) => [...picked, ...prev]);
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert("Oups", "Impossible d'ouvrir votre galerie.");
+    }
   };
+
   const removePhoto = (uri: string) => setImages((prev) => prev.filter((p) => p.uri !== uri));
   const toggleEquip = (id: string) =>
     setSelectedEquipIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -379,7 +423,7 @@ export default function PublishVehiculeScreen({ navigation }: Props) {
       navigation.replace("VehiculeDetails", { id: listingId });
     } catch (e: any) {
       console.error(e);
-      Alert.alert("Erreur", e?.message ?? "Impossible de publier l’annonce.");
+      Alert.alert("Erreur", e?.message ?? "Impossible de publier l'annonce.");
     } finally {
       setPublishing(false);
     }
@@ -420,10 +464,10 @@ export default function PublishVehiculeScreen({ navigation }: Props) {
                 <View style={styles.imagesHeader}>
                   <Label>Photos</Label>
                   <TouchableOpacity onPress={addPhoto} style={styles.addPhotoBtn} activeOpacity={0.9}>
-                    <Text style={styles.addPhotoTxt}>Ajouter une photo</Text>
+                    <Text style={styles.addPhotoTxt}>Ajouter des photos</Text>
                   </TouchableOpacity>
                 </View>
-                <Text>ATTENTION: LA DERNIÈRE PHOTO SERA LA 1ʳᵉ</Text>
+                <Text style={styles.hint}>💡 Les dernières photos ajoutées seront affichées en premier.</Text>
 
                 <View style={[styles.imagesGrid, invalidImages && styles.imagesGridError]}>
                   <TouchableOpacity onPress={addPhoto} style={styles.plusTile} activeOpacity={0.8}>
@@ -445,7 +489,7 @@ export default function PublishVehiculeScreen({ navigation }: Props) {
                 </View>
                 {invalidImages && (
                   <Text style={[styles.hint, styles.hintError, { marginTop: 6 }]}>
-                    Minimum {MIN_PICS} photos.
+                    Minimum {MIN_PICS} photos. Il manque {Math.max(0, MIN_PICS - images.length)} photo(s).
                   </Text>
                 )}
               </Card>
@@ -671,7 +715,7 @@ const styles = StyleSheet.create({
   imagesHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
   addPhotoBtn: { backgroundColor: "#111", paddingHorizontal: 12, paddingVertical: 10, borderRadius: 999 },
   addPhotoTxt: { color: "#fff", fontWeight: "900" },
-  imagesGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  imagesGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 8 },
   imagesGridError: {
     borderWidth: 1,
     borderColor: "#E61E4D",

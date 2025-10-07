@@ -3,7 +3,7 @@ import {
   Modal, View, Text, StyleSheet, TouchableOpacity, ScrollView,
   TextInput, SafeAreaView, KeyboardAvoidingView, Platform
 } from "react-native";
-import Ionicons, { IconName } from '@/src/ui/Icon';;
+import Ionicons from '@/src/ui/Icon';;
 
 /* --------- Types (optionnels si tu veux récupérer les filtres plus tard) --------- */
 export type Filters = {

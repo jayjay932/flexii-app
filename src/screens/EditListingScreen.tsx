@@ -18,7 +18,7 @@ import {
   Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import Ionicons, { IconName } from '@/src/ui/Icon';;
+import Ionicons from '@/src/ui/Icon';;
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system";
 import { supabase } from "@/src/lib/supabase";

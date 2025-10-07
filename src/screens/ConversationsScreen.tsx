@@ -14,7 +14,7 @@ import {
   Alert,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import Ionicons, { IconName } from '@/src/ui/Icon';;
+import Ionicons from '@/src/ui/Icon';;
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import {
   listMyConversations,

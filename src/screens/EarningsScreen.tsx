@@ -3,7 +3,7 @@ import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import Ionicons, { IconName } from '@/src/ui/Icon';
+import Ionicons from '@/src/ui/Icon';
 import { supabase } from "@/src/lib/supabase";
 
 /* =============== Types =============== */

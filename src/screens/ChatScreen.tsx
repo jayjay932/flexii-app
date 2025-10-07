@@ -17,7 +17,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
-import Ionicons, { IconName } from '@/src/ui/Icon';;
+import Ionicons from '@/src/ui/Icon';;
 import { supabase } from "@/src/lib/supabase";
 import type { RootStackParamList } from "@/src/navigation/RootNavigator";
 import type { Session } from "@supabase/supabase-js";
