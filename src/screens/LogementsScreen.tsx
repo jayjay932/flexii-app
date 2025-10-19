@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Ionicons from "@/src/ui/Icon";
-import { Image as ExpoImage } from "expo-image"; // ✅ ultra-fast image component
+import { Image as ExpoImage } from "expo-image";
 import { supabase } from "@/src/lib/supabase";
 import SearchBar from "@/src/components/SearchBar";
 import SegmentedTabs from "@/src/components/SegmentedTabs";
@@ -39,7 +39,7 @@ type Logement = {
 };
 
 // ────────────────────────────────────────────────────────────────────────────────
-// CONSTANTS (unchanged UI sizing, but extracted for perf)
+// CONSTANTS
 // ────────────────────────────────────────────────────────────────────────────────
 
 const { width: SCREEN_W } = Dimensions.get("window");
@@ -84,7 +84,6 @@ const unitFor = (t?: string | null) => {
   return v;
 };
 
-// Lightweight shimmer placeholder (base64 SVG) to avoid layout shift
 const shimmer = (w: number, h: number) => {
   const svg = `
     <svg width='${w}' height='${h}' viewBox='0 0 ${w} ${h}' xmlns='http://www.w3.org/2000/svg'>
@@ -103,7 +102,7 @@ const shimmer = (w: number, h: number) => {
 };
 
 // ────────────────────────────────────────────────────────────────────────────────
-// CARD (memoized, no logic change)
+// CARD COMPONENT
 // ────────────────────────────────────────────────────────────────────────────────
 
 type CardProps = {
@@ -115,49 +114,51 @@ const Card = memo(({ item, onPress }: CardProps) => {
   if (item.__empty) return <View style={{ width: CARD_W, marginHorizontal: GUTTER / 2 }} />;
 
   const uri = item.image_url || "https://via.placeholder.com/600x400";
+  
   return (
     <TouchableOpacity
       style={[styles.card, { width: CARD_W, marginHorizontal: GUTTER / 2 }]}
       activeOpacity={0.9}
       onPress={() => onPress(item.id)}
     >
-      {/* IMAGE ultra-optimisée */}
       <View style={styles.cardImageWrap}>
         <ExpoImage
           source={{ uri }}
-          // Aggressive caching for scale: memory+disk
           cachePolicy="memory-disk"
-          recyclingKey={item.id}
           placeholder={shimmer(CARD_W, IMG_H)}
           contentFit="cover"
           transition={200}
           style={styles.cardImage}
+          priority="normal"
         />
         <View style={styles.favBtn}>
           <Ionicons name="heart-outline" size={20} color="#111" />
         </View>
       </View>
 
-      {/* INFOS */}
       <View style={styles.cardInfo}>
-        <Text style={[styles.cardPrice, txtPrice]}>
+        <Text style={styles.cardPrice}>
           {item.price} XOF / {unitFor(item.rental_type)}
         </Text>
-        <Text style={[styles.cardTitle, txtTitle]} numberOfLines={1}>
+        <Text style={styles.cardTitle} numberOfLines={1}>
           {item.title}
         </Text>
-        <Text style={[styles.cardLocation, txtLoc]} numberOfLines={1}>
+        <Text style={styles.cardLocation} numberOfLines={1}>
           {item.city}
           {item.quartier ? `, ${item.quartier}` : ""}
         </Text>
       </View>
     </TouchableOpacity>
   );
+}, (prevProps, nextProps) => {
+  // Optimisation: ne re-render que si l'item change vraiment
+  return prevProps.item.id === nextProps.item.id && 
+         prevProps.item.image_url === nextProps.item.image_url;
 });
 Card.displayName = "Card";
 
 // ────────────────────────────────────────────────────────────────────────────────
-// SCREEN (keeps your data logic intact; only perf + image upgrades)
+// MAIN SCREEN
 // ────────────────────────────────────────────────────────────────────────────────
 
 export default function LogementsScreen({ navigation }: any) {
@@ -168,7 +169,6 @@ export default function LogementsScreen({ navigation }: any) {
   const [activeChip, setActiveChip] = useState<string | null>(null);
   const [tab, setTab] = useState<"Logements" | "Véhicules" | "Expériences">("Logements");
 
-  // Realtime wiring (unchanged)
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const fetchRef = useRef<null | ((opts?: { showSpinner?: boolean }) => Promise<void>)>(null);
 
@@ -366,7 +366,6 @@ export default function LogementsScreen({ navigation }: any) {
     };
   }, []);
 
-  // Fill last row for 2-column layout (unchanged logic)
   const gridData = useMemo(() => {
     if (logements.length % NUM_COLS === 0) return logements;
     const fillers = NUM_COLS - (logements.length % NUM_COLS);
@@ -378,41 +377,11 @@ export default function LogementsScreen({ navigation }: any) {
     ];
   }, [logements]);
 
-  // iOS-like text weights without custom fonts (unchanged design intent)
-  const txtPrice = {
-    fontWeight: Platform.OS === "ios" ? ("900" as const) : ("900" as const),
-    letterSpacing: 0.1,
-  };
-  const txtTitle = {
-    fontWeight: Platform.OS === "ios" ? ("800" as const) : ("700" as const),
-    letterSpacing: 0.1,
-  };
-  const txtLoc = {
-    fontWeight: "400" as const,
-    letterSpacing: 0.15,
-  };
-
-  // Navigation callback (no inline allocations inside render)
   const goToDetails = useCallback((id: string) => {
     navigation.navigate("LogementDetails", { id });
   }, [navigation]);
 
-  // FlatList perf knobs tuned for huge lists
   const KEY_EXTRACTOR = useCallback((item: Logement) => item.id, []);
-
-  // Provide stable layout hints to avoid extra measure passes
-  const getItemLayout = useCallback(
-    (_: unknown, index: number) => {
-      // Each row height = card vertical space (image + text + margins). Approximate for virtualization.
-      const ROW_H = IMG_H + 10 /*info padTop*/ + 60 /*texts*/ + 20 /*card margins*/;
-      // Two items per row → every 2 indices add a row
-      const row = Math.floor(index / NUM_COLS);
-      const length = ROW_H;
-      const offset = row * ROW_H;
-      return { length, offset, index };
-    },
-    []
-  );
 
   const renderItem = useCallback(({ item }: { item: Logement }) => {
     return <Card item={item} onPress={goToDetails} />;
@@ -468,12 +437,10 @@ export default function LogementsScreen({ navigation }: any) {
         <SafeAreaView edges={["top"]} style={styles.bannerSafe}>
           <SegmentedTabs value={tab} onChange={handleTabChange} />
 
-          {/* Recherche au centre */}
           <View style={styles.searchCenter}>
             <SearchBar topOffset={0} style={{ width: "92%" }} onPress={() => setSearchOpen(true)} />
           </View>
 
-          {/* Chips */}
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
             {CHIP_LABELS.map((label) => {
               const active = activeChip === label || (!activeChip && label === "Appartement meublé");
@@ -522,7 +489,7 @@ export default function LogementsScreen({ navigation }: any) {
             <Ionicons name="search-outline" size={36} color="#6b6b6b" />
             <Text style={{ marginTop: 10, fontWeight: "800", color: "#111" }}>Aucun logement trouvé</Text>
             <Text style={{ marginTop: 4, color: "#6b6b6b", textAlign: "center" }}>
-              Essaie d’élargir ta recherche ou réinitialise les filtres.
+              Essaie d'élargir ta recherche ou réinitialise les filtres.
             </Text>
             <TouchableOpacity onPress={resetAll} style={[styles.actionCard, { marginTop: 12 }]}>
               <Text style={styles.actionText}>Réinitialiser</Text>
@@ -537,17 +504,16 @@ export default function LogementsScreen({ navigation }: any) {
             columnWrapperStyle={{ paddingHorizontal: GUTTER }}
             contentContainerStyle={styles.list}
             showsVerticalScrollIndicator={false}
-            removeClippedSubviews
-            initialNumToRender={8}
-            maxToRenderPerBatch={8}
-            updateCellsBatchingPeriod={16}
-            windowSize={7}
-            getItemLayout={getItemLayout}
+            removeClippedSubviews={Platform.OS === 'android'}
+            initialNumToRender={10}
+            maxToRenderPerBatch={10}
+            updateCellsBatchingPeriod={50}
+            windowSize={5}
+            legacyImplementation={false}
           />
         )}
       </View>
 
-      {/* Bottom Nav */}
       <BottomNavBar
         current="logements"
         onChange={handleBottomTab}
@@ -555,7 +521,6 @@ export default function LogementsScreen({ navigation }: any) {
         onRequireAuth={() => navigation.navigate("AuthSheet")}
       />
 
-      {/* Modal de recherche connecté */}
       <SearchModal
         visible={searchOpen}
         onClose={() => setSearchOpen(false)}
@@ -567,7 +532,7 @@ export default function LogementsScreen({ navigation }: any) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────────
-// STYLES (kept identical visually)
+// STYLES
 // ────────────────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
@@ -588,7 +553,7 @@ const styles = StyleSheet.create({
     marginRight: 12,
     alignItems: "center",
     justifyContent: "center",
-    ...(Platform.OS === "android" ? { borderWidth: 0.5, borderColor: "rgba(0,0,0,0.05)" } : null),
+    ...(Platform.OS === "android" ? { borderWidth: 0.5, borderColor: "rgba(0,0,0,0.05)" } : {}),
   },
   chipActive: { backgroundColor: "#fff", borderWidth: 1, borderColor: "#E6E2DA" },
   chipText: { fontSize: 14, fontWeight: "700", color: "#222", letterSpacing: 0.1 },
@@ -664,6 +629,10 @@ const styles = StyleSheet.create({
     color: "#373030ff",
     lineHeight: 21,
     letterSpacing: 0.1,
+    ...Platform.select({
+      ios: { fontWeight: "900" },
+      android: { fontWeight: "900" },
+    }),
   },
   cardTitle: {
     fontSize: 15,
@@ -672,6 +641,10 @@ const styles = StyleSheet.create({
     color: "#5e5959ff",
     lineHeight: 20,
     letterSpacing: 0.1,
+    ...Platform.select({
+      ios: { fontWeight: "800" },
+      android: { fontWeight: "700" },
+    }),
   },
   cardLocation: {
     fontSize: 13,
@@ -684,17 +657,3 @@ const styles = StyleSheet.create({
 
   loader: { flex: 1, justifyContent: "center", alignItems: "center" },
 });
-
-// Local inline text styles (kept to avoid font loads)
-const txtPrice = {
-  fontWeight: Platform.OS === "ios" ? ("900" as const) : ("900" as const),
-  letterSpacing: 0.1,
-};
-const txtTitle = {
-  fontWeight: Platform.OS === "ios" ? ("800" as const) : ("700" as const),
-  letterSpacing: 0.1,
-};
-const txtLoc = {
-  fontWeight: "400" as const,
-  letterSpacing: 0.15,
-};

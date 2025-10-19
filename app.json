@@ -2,7 +2,7 @@
   "expo": {
     "name": "Flexiii",
     "slug": "Flexiii",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/images/flexii.png",
     "scheme": "Flexiii",
@@ -32,7 +32,7 @@
 
     "android": {
       "package": "com.flexii.mobile",
-      "versionCode": 9,
+      "versionCode": 10,
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "adaptiveIcon": {
